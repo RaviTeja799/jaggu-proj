@@ -1,0 +1,1249 @@
+================================================================================
+AI-POWERED REGULATORY COMPLIANCE CHECKER
+PRODUCTION IMPLEMENTATION BLUEPRINT
+================================================================================
+
+Date: October 22, 2025
+Version: 2.0 (Production-Ready Architecture)
+Status: Implementation Specification
+
+This document contains complete implementation details for all files needed to
+convert the current prototype into a production-ready system.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+PART 1: CORE AI/ML SERVICES
+  1.1 services/legal_bert_classifier.py
+  1.2 services/legal_llama.py
+  1.3 services/recommendation_generator.py
+  1.4 services/clause_generator.py
+  1.5 services/embedding_service.py
+
+PART 2: COMPLIANCE ENGINE
+  2.1 services/compliance_checker.py
+  2.2 services/compliance_rule_engine.py
+
+PART 3: DOCUMENT PROCESSING
+  3.1 services/document_processor.py (Enhanced)
+  3.2 services/ocr_extractor.py (Enhanced)
+  3.3 services/pdf_extractor.py (Enhanced)
+
+PART 4: DATA & KNOWLEDGE BASE
+  4.1 data/gdpr_requirements.json
+  4.2 data/hipaa_requirements.json
+  4.3 data/ccpa_requirements.json
+  4.4 data/sox_requirements.json
+  4.5 data/requirements_schema.md
+
+PART 5: TRAINING & TOOLING
+  5.1 training/finetune_legalbert.py
+  5.2 training/dataset_prep.py
+  5.3 training/labeling_instructions.md
+  5.4 training/sample_dataset/labeled_clauses.jsonl
+
+PART 6: INFRASTRUCTURE & PERSISTENCE
+  6.1 database/migrations/001_initial_schema.sql
+  6.2 database/schema.sql
+  6.3 database/models.py
+
+PART 7: API LAYER
+  7.1 api/main.py
+  7.2 api/auth.py
+  7.3 api/routes/documents.py
+  7.4 api/routes/analysis.py
+
+PART 8: BACKGROUND WORKERS
+  8.1 worker/celery_tasks.py
+  8.2 worker/celeryconfig.py
+
+PART 9: DEPLOYMENT
+  9.1 deployment/docker-compose.yml
+  9.2 deployment/Dockerfile
+  9.3 deployment/k8s/deployment.yaml
+
+PART 10: SCRIPTS & UTILITIES
+  10.1 scripts/build_embeddings.py
+  10.2 scripts/reindex_requirements.py
+  10.3 scripts/evaluate_model.py
+
+PART 11: CONFIGURATION
+  11.1 config/.env.template
+  11.2 config/production_settings.py
+
+PART 12: TESTING
+  12.1 tests/test_classifier.py
+  12.2 tests/test_recommendation_generator.py
+  12.3 tests/test_end_to_end_integration.py
+
+PART 13: CI/CD
+  13.1 .github/workflows/ci.yml
+
+PART 14: OBSERVABILITY & SECURITY
+  14.1 monitoring/prometheus.yml
+  14.2 monitoring/grafana_dashboards/compliance_dashboard.json
+  14.3 security/policy.md
+
+================================================================================
+PART 1: CORE AI/ML SERVICES
+================================================================================
+
+--------------------------------------------------------------------------------
+FILE: services/legal_bert_classifier.py
+PURPOSE: Production-ready LegalBERT classifier with trained model inference
+STATUS: REPLACE CURRENT KEYWORD FALLBACK
+--------------------------------------------------------------------------------
+
+"""
+LegalBERT-based clause classification service.
+Production version with trained model inference.
+"""
+import torch
+import torch.nn as nn
+from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
+from typing import Tuple, List, Dict, Optional
+import numpy as np
+from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class LegalBERTClassifier:
+    """
+    Production LegalBERT classifier with fine-tuned model.
+    
+    Key Changes from Prototype:
+    - Uses actual fine-tuned model instead of keywords
+    - Proper inference pipeline with batching
+    - Confidence calibration
+    - Model versioning and rollback support
+    """
+    
+    # Define clause types (must match training labels)
+    CLAUSE_TYPES = [
+        "Data Processing",
+        "Sub-processor Authorization",
+        "Data Subject Rights",
+        "Breach Notification",
+        "Data Transfer",
+        "Security Safeguards",
+        "Permitted Uses and Disclosures",
+        "Confidentiality",
+        "Audit Rights",
+        "Other"
+    ]
+    
+    def __init__(
+        self,
+        model_path: str = "models/legal-bert-clause-classifier-v1",
+        base_model: str = "nlpaueb/legal-bert-base-uncased",
+        device: Optional[str] = None,
+        batch_size: int = 32
+    ):
+        """
+        Initialize classifier with fine-tuned model.
+        
+        Args:
+            model_path: Path to fine-tuned model checkpoint
+            base_model: Base LegalBERT model for fallback
+            device: Device to use (cuda/cpu), auto-detect if None
+            batch_size: Batch size for inference
+        """
+        self.model_path = Path(model_path)
+        self.base_model = base_model
+        self.batch_size = batch_size
+        
+        # Device setup
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+        
+        logger.info(f"Using device: {self.device}")
+        
+        # Load model and tokenizer
+        self._load_model()
+        self._load_tokenizer()
+        
+        # Model metadata
+        self.model_version = self._load_model_metadata()
+        
+        logger.info(f"Loaded LegalBERT classifier v{self.model_version}")
+    
+    def _load_model(self):
+        """Load fine-tuned classification model."""
+        try:
+            if self.model_path.exists():
+                # Load fine-tuned model
+                logger.info(f"Loading fine-tuned model from {self.model_path}")
+                self.model = AutoModelForSequenceClassification.from_pretrained(
+                    str(self.model_path),
+                    num_labels=len(self.CLAUSE_TYPES)
+                )
+            else:
+                # Fallback: Initialize from base model (for first-time setup)
+                logger.warning(f"Fine-tuned model not found at {self.model_path}")
+                logger.info("Initializing from base model - REQUIRES FINE-TUNING")
+                self.model = AutoModelForSequenceClassification.from_pretrained(
+                    self.base_model,
+                    num_labels=len(self.CLAUSE_TYPES)
+                )
+            
+            self.model.to(self.device)
+            self.model.eval()
+            
+        except Exception as e:
+            logger.error(f"Error loading model: {e}")
+            raise
+    
+    def _load_tokenizer(self):
+        """Load tokenizer."""
+        try:
+            if self.model_path.exists():
+                self.tokenizer = AutoTokenizer.from_pretrained(str(self.model_path))
+            else:
+                self.tokenizer = AutoTokenizer.from_pretrained(self.base_model)
+                
+            logger.info("Tokenizer loaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Error loading tokenizer: {e}")
+            raise
+    
+    def _load_model_metadata(self) -> str:
+        """Load model version and metadata."""
+        metadata_file = self.model_path / "metadata.json"
+        if metadata_file.exists():
+            import json
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+                return metadata.get('version', 'unknown')
+        return 'unknown'
+    
+    def predict(
+        self,
+        text: str,
+        return_probabilities: bool = False
+    ) -> Tuple[str, float, List[Tuple[str, float]]]:
+        """
+        Classify a single clause.
+        
+        Args:
+            text: Clause text to classify
+            return_probabilities: Whether to return full probability distribution
+            
+        Returns:
+            Tuple of (predicted_type, confidence, alternatives)
+            alternatives: List of (clause_type, probability) sorted by probability
+        """
+        try:
+            # Tokenize
+            inputs = self.tokenizer(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=512,
+                padding=True
+            ).to(self.device)
+            
+            # Inference
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+                logits = outputs.logits
+                probabilities = torch.softmax(logits, dim=-1)[0]
+            
+            # Get predictions
+            predicted_idx = torch.argmax(probabilities).item()
+            confidence = probabilities[predicted_idx].item()
+            predicted_type = self.CLAUSE_TYPES[predicted_idx]
+            
+            # Get alternatives
+            alternatives = [
+                (self.CLAUSE_TYPES[i], probabilities[i].item())
+                for i in range(len(self.CLAUSE_TYPES))
+            ]
+            alternatives.sort(key=lambda x: x[1], reverse=True)
+            
+            logger.debug(
+                f"Classified as '{predicted_type}' with confidence {confidence:.3f}"
+            )
+            
+            return predicted_type, confidence, alternatives
+            
+        except Exception as e:
+            logger.error(f"Error during classification: {e}")
+            # Return safe default
+            return "Other", 0.0, []
+    
+    def predict_batch(
+        self,
+        texts: List[str]
+    ) -> List[Tuple[str, float, List[Tuple[str, float]]]]:
+        """
+        Classify multiple clauses efficiently.
+        
+        Args:
+            texts: List of clause texts
+            
+        Returns:
+            List of (predicted_type, confidence, alternatives) for each text
+        """
+        results = []
+        
+        # Process in batches
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i:i + self.batch_size]
+            
+            try:
+                # Tokenize batch
+                inputs = self.tokenizer(
+                    batch,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=512,
+                    padding=True
+                ).to(self.device)
+                
+                # Inference
+                with torch.no_grad():
+                    outputs = self.model(**inputs)
+                    logits = outputs.logits
+                    probabilities = torch.softmax(logits, dim=-1)
+                
+                # Process each result in batch
+                for j in range(len(batch)):
+                    probs = probabilities[j]
+                    predicted_idx = torch.argmax(probs).item()
+                    confidence = probs[predicted_idx].item()
+                    predicted_type = self.CLAUSE_TYPES[predicted_idx]
+                    
+                    alternatives = [
+                        (self.CLAUSE_TYPES[k], probs[k].item())
+                        for k in range(len(self.CLAUSE_TYPES))
+                    ]
+                    alternatives.sort(key=lambda x: x[1], reverse=True)
+                    
+                    results.append((predicted_type, confidence, alternatives))
+                
+            except Exception as e:
+                logger.error(f"Error processing batch {i}: {e}")
+                # Add safe defaults for failed batch
+                for _ in batch:
+                    results.append(("Other", 0.0, []))
+        
+        return results
+    
+    def calibrate_confidence(
+        self,
+        raw_confidence: float,
+        clause_type: str
+    ) -> float:
+        """
+        Apply confidence calibration based on per-class statistics.
+        
+        This should be trained on validation set to map raw probabilities
+        to calibrated probabilities that better reflect true accuracy.
+        
+        Args:
+            raw_confidence: Raw softmax probability
+            clause_type: Predicted clause type
+            
+        Returns:
+            Calibrated confidence score
+        """
+        # TODO: Implement proper calibration (Platt scaling or isotonic regression)
+        # For now, simple linear adjustment
+        
+        # These would be learned from validation set
+        calibration_params = {
+            "Data Processing": {"slope": 0.95, "intercept": 0.02},
+            "Security Safeguards": {"slope": 0.90, "intercept": 0.05},
+            "Other": {"slope": 0.85, "intercept": 0.10},
+        }
+        
+        params = calibration_params.get(
+            clause_type,
+            {"slope": 0.90, "intercept": 0.05}
+        )
+        
+        calibrated = raw_confidence * params["slope"] + params["intercept"]
+        return min(max(calibrated, 0.0), 1.0)  # Clamp to [0, 1]
+    
+    def get_model_info(self) -> Dict:
+        """Get model information and statistics."""
+        return {
+            "version": self.model_version,
+            "model_path": str(self.model_path),
+            "base_model": self.base_model,
+            "device": str(self.device),
+            "num_labels": len(self.CLAUSE_TYPES),
+            "clause_types": self.CLAUSE_TYPES,
+            "batch_size": self.batch_size
+        }
+
+
+# Example usage and testing utilities
+def evaluate_on_test_set(
+    classifier: LegalBERTClassifier,
+    test_data_path: str
+) -> Dict:
+    """
+    Evaluate classifier on test set.
+    
+    Args:
+        classifier: LegalBERTClassifier instance
+        test_data_path: Path to test dataset (JSONL format)
+        
+    Returns:
+        Dict with evaluation metrics
+    """
+    import json
+    from sklearn.metrics import (
+        accuracy_score,
+        precision_recall_fscore_support,
+        confusion_matrix
+    )
+    
+    # Load test data
+    texts = []
+    true_labels = []
+    
+    with open(test_data_path, 'r') as f:
+        for line in f:
+            item = json.loads(line)
+            texts.append(item['text'])
+            true_labels.append(item['label'])
+    
+    # Predict
+    predictions = classifier.predict_batch(texts)
+    pred_labels = [pred[0] for pred in predictions]
+    confidences = [pred[1] for pred in predictions]
+    
+    # Calculate metrics
+    accuracy = accuracy_score(true_labels, pred_labels)
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        true_labels,
+        pred_labels,
+        average='weighted'
+    )
+    
+    conf_matrix = confusion_matrix(
+        true_labels,
+        pred_labels,
+        labels=classifier.CLAUSE_TYPES
+    )
+    
+    return {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1_score": f1,
+        "average_confidence": np.mean(confidences),
+        "confusion_matrix": conf_matrix.tolist(),
+        "num_samples": len(texts)
+    }
+
+
+--------------------------------------------------------------------------------
+FILE: services/legal_llama.py
+PURPOSE: Production LLM inference wrapper with prompt templates and caching
+STATUS: ENHANCE WITH REAL MODEL LOADING AND OPTIMIZATIONS
+--------------------------------------------------------------------------------
+
+"""
+LegalLLaMA service for generating recommendations and compliant clause text.
+Production version with proper model loading, caching, and batching.
+"""
+import torch
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    GenerationConfig
+)
+from typing import Optional, Dict, Any, List
+import time
+import logging
+from functools import lru_cache
+import hashlib
+import json
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+class LegalLLaMA:
+    """
+    Production LLM wrapper for legal text generation.
+    
+    Key Features:
+    - Proper model loading with quantization
+    - Response caching
+    - Batch inference
+    - Template-based prompting
+    - Token usage tracking
+    """
+    
+    def __init__(
+        self,
+        model_name: str = "meta-llama/Llama-2-13b-chat-hf",
+        use_gpu: bool = True,
+        use_8bit: bool = True,  # 8-bit quantization for memory efficiency
+        max_tokens: int = 512,
+        temperature: float = 0.7,
+        cache_dir: Optional[str] = None
+    ):
+        """
+        Initialize LegalLLaMA model.
+        
+        Args:
+            model_name: HuggingFace model identifier
+            use_gpu: Whether to use GPU if available
+            use_8bit: Use 8-bit quantization (requires bitsandbytes)
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            cache_dir: Directory for model and response caching
+        """
+        logger.info("Initializing LegalLLaMA model...")
+        
+        self.model_name = model_name
+        self.use_gpu = use_gpu
+        self.use_8bit = use_8bit
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        
+        # Cache setup
+        self.cache_dir = Path(cache_dir) if cache_dir else Path("./cache/llm")
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.response_cache = {}
+        
+        # Device detection
+        self.device = self._detect_device()
+        logger.info(f"Using device: {self.device}")
+        
+        # Load model and tokenizer
+        self._load_model()
+        
+        # Statistics tracking
+        self.stats = {
+            "total_requests": 0,
+            "cache_hits": 0,
+            "total_tokens_generated": 0,
+            "total_time_ms": 0
+        }
+        
+        logger.info("LegalLLaMA initialized successfully")
+    
+    def _detect_device(self) -> str:
+        """Detect and validate device availability."""
+        if self.use_gpu and torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info(f"GPU detected: {gpu_name}")
+            return "cuda"
+        else:
+            if self.use_gpu:
+                logger.warning("GPU requested but not available, using CPU")
+            return "cpu"
+    
+    def _load_model(self):
+        """Load model with optimizations."""
+        try:
+            start_time = time.time()
+            logger.info(f"Loading model: {self.model_name}")
+            
+            # Load tokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                cache_dir=str(self.cache_dir),
+                trust_remote_code=True
+            )
+            
+            # Set padding token
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            
+            logger.info("Tokenizer loaded")
+            
+            # Model loading configuration
+            load_kwargs = {
+                "cache_dir": str(self.cache_dir),
+                "trust_remote_code": True,
+                "low_cpu_mem_usage": True
+            }
+            
+            # Add quantization if requested
+            if self.use_8bit and self.device == "cuda":
+                logger.info("Using 8-bit quantization")
+                load_kwargs.update({
+                    "load_in_8bit": True,
+                    "device_map": "auto"
+                })
+            else:
+                load_kwargs["torch_dtype"] = torch.float16 if self.device == "cuda" else torch.float32
+            
+            # Load model
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                **load_kwargs
+            )
+            
+            # Move to device if not using device_map
+            if not self.use_8bit or self.device == "cpu":
+                self.model = self.model.to(self.device)
+            
+            self.model.eval()
+            
+            elapsed = time.time() - start_time
+            logger.info(f"Model loaded in {elapsed:.2f}s")
+            
+            # Setup generation config
+            self.generation_config = GenerationConfig(
+                max_new_tokens=self.max_tokens,
+                temperature=self.temperature,
+                top_p=0.9,
+                do_sample=True,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                repetition_penalty=1.1
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to load model: {e}", exc_info=True)
+            raise RuntimeError(f"Model loading failed: {e}")
+    
+    def _get_cache_key(self, prompt: str, **kwargs) -> str:
+        """Generate cache key for prompt and parameters."""
+        cache_data = {
+            "prompt": prompt,
+            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            "temperature": kwargs.get("temperature", self.temperature)
+        }
+        cache_str = json.dumps(cache_data, sort_keys=True)
+        return hashlib.md5(cache_str.encode()).hexdigest()
+    
+    def generate(
+        self,
+        prompt: str,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        use_cache: bool = True,
+        **kwargs
+    ) -> str:
+        """
+        Generate text from prompt.
+        
+        Args:
+            prompt: Input prompt
+            max_tokens: Override default max tokens
+            temperature: Override default temperature
+            use_cache: Whether to use response cache
+            **kwargs: Additional generation parameters
+            
+        Returns:
+            Generated text
+        """
+        self.stats["total_requests"] += 1
+        
+        # Check cache
+        if use_cache:
+            cache_key = self._get_cache_key(prompt, max_tokens=max_tokens, temperature=temperature)
+            if cache_key in self.response_cache:
+                logger.debug("Cache hit")
+                self.stats["cache_hits"] += 1
+                return self.response_cache[cache_key]
+        
+        try:
+            start_time = time.time()
+            
+            # Update generation config
+            gen_config = GenerationConfig(
+                **self.generation_config.to_dict(),
+                max_new_tokens=max_tokens or self.max_tokens,
+                temperature=temperature if temperature is not None else self.temperature,
+                **kwargs
+            )
+            
+            # Tokenize
+            inputs = self.tokenizer(
+                prompt,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=2048
+            ).to(self.device)
+            
+            # Generate
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    generation_config=gen_config
+                )
+            
+            # Decode
+            generated_text = self.tokenizer.decode(
+                outputs[0],
+                skip_special_tokens=True
+            )
+            
+            # Remove prompt from output
+            if generated_text.startswith(prompt):
+                generated_text = generated_text[len(prompt):].strip()
+            
+            # Update statistics
+            elapsed_ms = (time.time() - start_time) * 1000
+            self.stats["total_time_ms"] += elapsed_ms
+            self.stats["total_tokens_generated"] += len(outputs[0])
+            
+            logger.debug(f"Generated {len(outputs[0])} tokens in {elapsed_ms:.0f}ms")
+            
+            # Cache response
+            if use_cache:
+                self.response_cache[cache_key] = generated_text
+            
+            return generated_text
+            
+        except Exception as e:
+            logger.error(f"Generation failed: {e}", exc_info=True)
+            raise
+    
+    def generate_batch(
+        self,
+        prompts: List[str],
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        **kwargs
+    ) -> List[str]:
+        """
+        Generate responses for multiple prompts efficiently.
+        
+        Args:
+            prompts: List of prompts
+            max_tokens: Override max tokens
+            temperature: Override temperature
+            **kwargs: Additional parameters
+            
+        Returns:
+            List of generated texts
+        """
+        try:
+            start_time = time.time()
+            
+            # Tokenize all prompts
+            inputs = self.tokenizer(
+                prompts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=2048
+            ).to(self.device)
+            
+            # Update generation config
+            gen_config = GenerationConfig(
+                **self.generation_config.to_dict(),
+                max_new_tokens=max_tokens or self.max_tokens,
+                temperature=temperature if temperature is not None else self.temperature,
+                **kwargs
+            )
+            
+            # Generate
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    generation_config=gen_config
+                )
+            
+            # Decode all outputs
+            results = []
+            for i, output in enumerate(outputs):
+                text = self.tokenizer.decode(output, skip_special_tokens=True)
+                
+                # Remove prompt
+                if text.startswith(prompts[i]):
+                    text = text[len(prompts[i]):].strip()
+                
+                results.append(text)
+            
+            elapsed_ms = (time.time() - start_time) * 1000
+            logger.info(f"Batch generated {len(prompts)} responses in {elapsed_ms:.0f}ms")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Batch generation failed: {e}", exc_info=True)
+            raise
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get usage statistics."""
+        cache_hit_rate = 0.0
+        if self.stats["total_requests"] > 0:
+            cache_hit_rate = self.stats["cache_hits"] / self.stats["total_requests"]
+        
+        avg_time_ms = 0.0
+        if self.stats["total_requests"] > 0:
+            avg_time_ms = self.stats["total_time_ms"] / self.stats["total_requests"]
+        
+        return {
+            **self.stats,
+            "cache_hit_rate": cache_hit_rate,
+            "average_time_ms": avg_time_ms,
+            "cache_size": len(self.response_cache)
+        }
+    
+    def clear_cache(self):
+        """Clear response cache."""
+        self.response_cache.clear()
+        logger.info("Response cache cleared")
+
+
+class PromptTemplate:
+    """
+    Template system for legal prompts.
+    """
+    
+    RECOMMENDATION_TEMPLATE = """You are a legal compliance expert. Analyze the following clause and provide a recommendation.
+
+Clause Type: {clause_type}
+Regulation: {framework}
+Compliance Status: {status}
+Issues Found: {issues}
+
+Original Clause:
+{clause_text}
+
+Requirement:
+{requirement_text}
+
+Provide a structured recommendation including:
+1. Summary of the issue
+2. Legal reasoning
+3. Priority level (High/Medium/Low)
+4. Specific action to take
+
+Recommendation:"""
+
+    CLAUSE_GENERATION_TEMPLATE = """You are a legal compliance expert. Generate a compliant clause for the following requirement.
+
+Regulation: {framework}
+Requirement: {requirement_text}
+Article Reference: {article_reference}
+
+Mandatory Elements:
+{mandatory_elements}
+
+Context from existing contract:
+{context}
+
+Generate a professionally worded clause that satisfies all requirements. The clause should be:
+- Legally sound and precise
+- Include all mandatory elements
+- Match the tone of the existing contract
+- Be clear and unambiguous
+
+Generated Clause:"""
+
+    @classmethod
+    def format_recommendation(
+        cls,
+        clause_type: str,
+        framework: str,
+        status: str,
+        issues: List[str],
+        clause_text: str,
+        requirement_text: str
+    ) -> str:
+        """Format recommendation prompt."""
+        return cls.RECOMMENDATION_TEMPLATE.format(
+            clause_type=clause_type,
+            framework=framework,
+            status=status,
+            issues="\n- ".join(issues),
+            clause_text=clause_text,
+            requirement_text=requirement_text
+        )
+    
+    @classmethod
+    def format_clause_generation(
+        cls,
+        framework: str,
+        requirement_text: str,
+        article_reference: str,
+        mandatory_elements: List[str],
+        context: str = ""
+    ) -> str:
+        """Format clause generation prompt."""
+        elements_str = "\n- ".join(mandatory_elements)
+        return cls.CLAUSE_GENERATION_TEMPLATE.format(
+            framework=framework,
+            requirement_text=requirement_text,
+            article_reference=article_reference,
+            mandatory_elements=elements_str,
+            context=context or "None provided"
+        )
+
+
+--------------------------------------------------------------------------------
+FILE: services/recommendation_generator.py
+PURPOSE: Orchestrate classifier + LLM for recommendation JSON generation
+STATUS: ENHANCE TO USE REAL MODELS
+--------------------------------------------------------------------------------
+
+"""
+Recommendation Generator service.
+Orchestrates LegalBERT classification and LLaMA generation for recommendations.
+"""
+from typing import List, Dict, Any, Optional
+import logging
+from dataclasses import dataclass, asdict
+import json
+
+from models.recommendation import Recommendation, RecommendationPriority
+from models.regulatory_requirement import (
+    ClauseComplianceResult,
+    RegulatoryRequirement,
+    ComplianceStatus
+)
+from services.legal_llama import LegalLLaMA, PromptTemplate
+from services.legal_bert_classifier import LegalBERTClassifier
+
+logger = logging.getLogger(__name__)
+
+
+class RecommendationGenerator:
+    """
+    Generate structured recommendations using LLM.
+    
+    Production version that:
+    - Uses real LLM instead of templates
+    - Parses structured JSON from LLM output
+    - Validates and sanitizes responses
+    - Handles errors gracefully
+    """
+    
+    def __init__(
+        self,
+        llama_model: Optional[LegalLLaMA] = None,
+        classifier: Optional[LegalBERTClassifier] = None,
+        use_cache: bool = True
+    ):
+        """
+        Initialize recommendation generator.
+        
+        Args:
+            llama_model: LegalLLaMA instance (creates new if None)
+            classifier: LegalBERTClassifier for verification
+            use_cache: Whether to cache LLM responses
+        """
+        self.llama = llama_model or LegalLLaMA()
+        self.classifier = classifier
+        self.use_cache = use_cache
+        
+        logger.info("RecommendationGenerator initialized")
+    
+    def generate_recommendation(
+        self,
+        clause_result: ClauseComplianceResult,
+        requirement: RegulatoryRequirement,
+        clause_text: str
+    ) -> Recommendation:
+        """
+        Generate a single recommendation.
+        
+        Args:
+            clause_result: Compliance analysis result
+            requirement: The regulatory requirement
+            clause_text: Original clause text
+            
+        Returns:
+            Structured Recommendation object
+        """
+        try:
+            # Build prompt
+            prompt = PromptTemplate.format_recommendation(
+                clause_type=clause_result.clause_type,
+                framework=requirement.framework,
+                status=clause_result.compliance_status.value,
+                issues=clause_result.issues,
+                clause_text=clause_text,
+                requirement_text=requirement.description
+            )
+            
+            # Generate with LLM
+            raw_response = self.llama.generate(
+                prompt=prompt,
+                temperature=0.7,
+                max_tokens=512,
+                use_cache=self.use_cache
+            )
+            
+            # Parse structured response
+            recommendation_data = self._parse_recommendation_response(raw_response)
+            
+            # Determine priority
+            priority = self._calculate_priority(
+                clause_result=clause_result,
+                requirement=requirement
+            )
+            
+            # Create recommendation object
+            recommendation = Recommendation(
+                clause_id=clause_result.clause_id,
+                requirement_id=requirement.requirement_id,
+                framework=requirement.framework,
+                clause_type=clause_result.clause_type,
+                priority=priority,
+                issue_summary=recommendation_data.get(
+                    "summary",
+                    f"Non-compliance with {requirement.article_reference}"
+                ),
+                legal_reasoning=recommendation_data.get(
+                    "reasoning",
+                    requirement.description
+                ),
+                recommended_action=recommendation_data.get(
+                    "action",
+                    "Review and update clause to meet requirements"
+                ),
+                compliance_status=clause_result.compliance_status,
+                confidence_score=clause_result.confidence,
+                risk_level=clause_result.risk_level
+            )
+            
+            logger.debug(
+                f"Generated recommendation for clause {clause_result.clause_id}: "
+                f"{priority.value} priority"
+            )
+            
+            return recommendation
+            
+        except Exception as e:
+            logger.error(f"Error generating recommendation: {e}", exc_info=True)
+            # Return fallback recommendation
+            return self._create_fallback_recommendation(
+                clause_result=clause_result,
+                requirement=requirement
+            )
+    
+    def generate_recommendations_batch(
+        self,
+        clause_results: List[ClauseComplianceResult],
+        requirements_map: Dict[str, RegulatoryRequirement],
+        clauses_map: Dict[str, str]
+    ) -> List[Recommendation]:
+        """
+        Generate recommendations for multiple clauses efficiently.
+        
+        Args:
+            clause_results: List of compliance results
+            requirements_map: Dict mapping requirement_id to RegulatoryRequirement
+            clauses_map: Dict mapping clause_id to clause text
+            
+        Returns:
+            List of Recommendation objects
+        """
+        recommendations = []
+        
+        # Group by need for recommendation
+        needs_recommendation = [
+            cr for cr in clause_results
+            if cr.compliance_status != ComplianceStatus.COMPLIANT
+        ]
+        
+        logger.info(f"Generating {len(needs_recommendation)} recommendations")
+        
+        # Build prompts for batch
+        prompts = []
+        metadata = []
+        
+        for clause_result in needs_recommendation:
+            # Get first matched requirement (or use requirement from result)
+            if clause_result.matched_requirements:
+                requirement = clause_result.matched_requirements[0]
+            else:
+                # Skip if no requirements matched
+                continue
+            
+            clause_text = clauses_map.get(clause_result.clause_id, "")
+            
+            prompt = PromptTemplate.format_recommendation(
+                clause_type=clause_result.clause_type,
+                framework=requirement.framework,
+                status=clause_result.compliance_status.value,
+                issues=clause_result.issues,
+                clause_text=clause_text,
+                requirement_text=requirement.description
+            )
+            
+            prompts.append(prompt)
+            metadata.append((clause_result, requirement, clause_text))
+        
+        # Generate batch
+        if prompts:
+            try:
+                raw_responses = self.llama.generate_batch(
+                    prompts=prompts,
+                    temperature=0.7,
+                    max_tokens=512
+                )
+                
+                # Process responses
+                for (clause_result, requirement, clause_text), raw_response in zip(metadata, raw_responses):
+                    try:
+                        recommendation_data = self._parse_recommendation_response(raw_response)
+                        
+                        priority = self._calculate_priority(
+                            clause_result=clause_result,
+                            requirement=requirement
+                        )
+                        
+                        recommendation = Recommendation(
+                            clause_id=clause_result.clause_id,
+                            requirement_id=requirement.requirement_id,
+                            framework=requirement.framework,
+                            clause_type=clause_result.clause_type,
+                            priority=priority,
+                            issue_summary=recommendation_data.get("summary", ""),
+                            legal_reasoning=recommendation_data.get("reasoning", ""),
+                            recommended_action=recommendation_data.get("action", ""),
+                            compliance_status=clause_result.compliance_status,
+                            confidence_score=clause_result.confidence,
+                            risk_level=clause_result.risk_level
+                        )
+                        
+                        recommendations.append(recommendation)
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing recommendation: {e}")
+                        # Add fallback
+                        recommendations.append(
+                            self._create_fallback_recommendation(clause_result, requirement)
+                        )
+            
+            except Exception as e:
+                logger.error(f"Batch generation failed: {e}")
+                # Fallback to individual generation
+                for clause_result, requirement, clause_text in metadata:
+                    rec = self.generate_recommendation(clause_result, requirement, clause_text)
+                    recommendations.append(rec)
+        
+        logger.info(f"Generated {len(recommendations)} recommendations")
+        return recommendations
+    
+    def _parse_recommendation_response(self, response: str) -> Dict[str, str]:
+        """
+        Parse structured recommendation from LLM response.
+        
+        Args:
+            response: Raw LLM output
+            
+        Returns:
+            Dict with summary, reasoning, action fields
+        """
+        # Try to parse as JSON first
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            pass
+        
+        # Parse text-based structured output
+        result = {
+            "summary": "",
+            "reasoning": "",
+            "action": "",
+            "priority": "Medium"
+        }
+        
+        # Look for labeled sections
+        lines = response.split('\n')
+        current_section = None
+        
+        for line in lines:
+            line = line.strip()
+            
+            if line.lower().startswith("1.") or "summary" in line.lower():
+                current_section = "summary"
+            elif line.lower().startswith("2.") or "reasoning" in line.lower():
+                current_section = "reasoning"
+            elif line.lower().startswith("3.") or "priority" in line.lower():
+                current_section = "priority"
+            elif line.lower().startswith("4.") or "action" in line.lower():
+                current_section = "action"
+            elif current_section and line:
+                # Remove numbering and colons
+                content = line.lstrip("1234567890.:-) ").strip()
+                if content:
+                    if result[current_section]:
+                        result[current_section] += " " + content
+                    else:
+                        result[current_section] = content
+        
+        return result
+    
+    def _calculate_priority(
+        self,
+        clause_result: ClauseComplianceResult,
+        requirement: RegulatoryRequirement
+    ) -> RecommendationPriority:
+        """
+        Calculate recommendation priority based on multiple factors.
+        
+        Args:
+            clause_result: Compliance result
+            requirement: Regulatory requirement
+            
+        Returns:
+            RecommendationPriority enum value
+        """
+        score = 0
+        
+        # Factor 1: Compliance status (0-30 points)
+        if clause_result.compliance_status == ComplianceStatus.NON_COMPLIANT:
+            score += 30
+        elif clause_result.compliance_status == ComplianceStatus.PARTIAL:
+            score += 15
+        
+        # Factor 2: Risk level (0-30 points)
+        risk_scores = {"HIGH": 30, "MEDIUM": 15, "LOW": 5}
+        score += risk_scores.get(clause_result.risk_level.value, 0)
+        
+        # Factor 3: Requirement mandatory flag (0-20 points)
+        if requirement.mandatory:
+            score += 20
+        
+        # Factor 4: Number of issues (0-20 points)
+        score += min(len(clause_result.issues) * 5, 20)
+        
+        # Map score to priority
+        if score >= 70:
+            return RecommendationPriority.HIGH
+        elif score >= 40:
+            return RecommendationPriority.MEDIUM
+        else:
+            return RecommendationPriority.LOW
+    
+    def _create_fallback_recommendation(
+        self,
+        clause_result: ClauseComplianceResult,
+        requirement: RegulatoryRequirement
+    ) -> Recommendation:
+        """Create fallback recommendation when LLM fails."""
+        priority = self._calculate_priority(clause_result, requirement)
+        
+        return Recommendation(
+            clause_id=clause_result.clause_id,
+            requirement_id=requirement.requirement_id,
+            framework=requirement.framework,
+            clause_type=clause_result.clause_type,
+            priority=priority,
+            issue_summary=f"Clause does not meet {requirement.article_reference} requirements",
+            legal_reasoning=requirement.description,
+            recommended_action="Review and update clause to include all mandatory elements",
+            compliance_status=clause_result.compliance_status,
+            confidence_score=clause_result.confidence,
+            risk_level=clause_result.risk_level
+        )
+
+
+[CONTINUED IN PART 2 DUE TO LENGTH...]
+
+This file would continue with all remaining sections. Would you like me to continue with the remaining parts (Part 2 onwards)?
