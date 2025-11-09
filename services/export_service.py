@@ -315,29 +315,38 @@ class ExportService:
         Returns:
             Dictionary formatted for PDF generator
         """
+        from models.regulatory_requirement import ComplianceStatus, RiskLevel
+        
         # Calculate metrics
         total_clauses = len(report.clause_results)
-        compliant_clauses = sum(1 for c in report.clause_results if c.is_compliant)
-        non_compliant_clauses = total_clauses - compliant_clauses
+        compliant_clauses = sum(
+            1 for c in report.clause_results 
+            if c.compliance_status == ComplianceStatus.COMPLIANT
+        )
+        non_compliant_clauses = sum(
+            1 for c in report.clause_results 
+            if c.compliance_status == ComplianceStatus.NON_COMPLIANT
+        )
         missing_clauses = len(report.missing_requirements)
         
         # Risk distribution
         risk_distribution = {'high': 0, 'medium': 0, 'low': 0}
         for clause in report.clause_results:
-            risk = clause.risk_level.lower() if clause.risk_level else 'low'
-            if risk in risk_distribution:
-                risk_distribution[risk] += 1
-            elif risk == 'critical':
+            if clause.risk_level == RiskLevel.HIGH:
                 risk_distribution['high'] += 1
+            elif clause.risk_level == RiskLevel.MEDIUM:
+                risk_distribution['medium'] += 1
+            elif clause.risk_level == RiskLevel.LOW:
+                risk_distribution['low'] += 1
         
         # Clause analysis
         clause_analysis = []
         for clause in report.clause_results[:50]:  # Limit to 50 for PDF
             clause_analysis.append({
                 'clause_id': clause.clause_id or 'N/A',
-                'clause_text': clause.clause.clause_text if clause.clause else 'N/A',
-                'is_compliant': clause.is_compliant,
-                'risk_level': clause.risk_level or 'low',
+                'clause_text': clause.clause_text or 'N/A',
+                'is_compliant': clause.compliance_status == ComplianceStatus.COMPLIANT,
+                'risk_level': clause.risk_level.value.lower() if clause.risk_level else 'low',
                 'issues': clause.issues or []
             })
         
