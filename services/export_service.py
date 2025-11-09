@@ -353,7 +353,7 @@ class ExportService:
         # Recommendations
         rec_list = []
         if recommendations:
-            rec_list = [rec.recommendation_text for rec in recommendations[:10]]
+            rec_list = [rec.description for rec in recommendations[:10]]
         
         # Executive summary
         exec_summary = ""
