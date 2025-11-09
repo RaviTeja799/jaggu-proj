@@ -190,18 +190,35 @@ with tab1:
         
         upload_method = st.radio(
             "Select upload method:",
-            ["File Upload", "Text Input", "Google Sheets URL"]
+            ["Single File Upload", "Batch Upload (up to 10 files)", "Text Input", "Google Sheets URL"]
         )
         
         uploaded_file = None
+        uploaded_files = None
         contract_text = None
         
-        if upload_method == "File Upload":
+        if upload_method == "Single File Upload":
             uploaded_file = st.file_uploader(
                 "Choose a file",
                 type=['pdf', 'docx', 'txt', 'png', 'jpg'],
                 help="Supported formats: PDF, DOCX, TXT, PNG, JPG (max 10MB)"
             )
+        
+        elif upload_method == "Batch Upload (up to 10 files)":
+            uploaded_files = st.file_uploader(
+                "Choose multiple files (up to 10)",
+                type=['pdf', 'docx', 'txt', 'png', 'jpg'],
+                accept_multiple_files=True,
+                help="Upload up to 10 contract files for batch processing"
+            )
+            
+            if uploaded_files and len(uploaded_files) > 10:
+                st.error("⚠️ Maximum 10 files allowed. Please remove some files.")
+                uploaded_files = None
+            elif uploaded_files:
+                st.info(f"📁 {len(uploaded_files)} files selected for batch processing")
+        
+        if upload_method == "Single File Upload" and uploaded_file is not None:
             
             if uploaded_file is not None:
                 # Validate file size (max 10MB)
@@ -247,6 +264,129 @@ with tab1:
                         except Exception as e:
                             st.error(f"❌ Unexpected error: {e}")
                             logger.exception(f"Unexpected error: {e}")
+        
+        elif upload_method == "Batch Upload (up to 10 files)" and uploaded_files:
+            st.markdown("### 📦 Batch Processing")
+            
+            # Validate all file sizes
+            max_size = 10 * 1024 * 1024  # 10MB
+            oversized_files = [f for f in uploaded_files if f.size > max_size]
+            
+            if oversized_files:
+                st.error(f"⚠️ {len(oversized_files)} file(s) exceed 10MB limit:")
+                for f in oversized_files:
+                    st.write(f"- {f.name} ({f.size / 1024 / 1024:.1f} MB)")
+            else:
+                # Display file list
+                with st.expander("📁 Selected Files", expanded=True):
+                    for i, f in enumerate(uploaded_files, 1):
+                        st.write(f"{i}. {f.name} ({f.size / 1024:.1f} KB)")
+                
+                # Batch processing button
+                if st.button("🚀 Process All Files", type="primary", use_container_width=True):
+                    from services.batch_processor import BatchProcessor
+                    
+                    # Save uploaded files to temp locations
+                    temp_paths = []
+                    for uploaded in uploaded_files:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded.name).suffix) as tmp_file:
+                            tmp_file.write(uploaded.getvalue())
+                            temp_paths.append(tmp_file.name)
+                    
+                    # Create progress tracking
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    file_status = {f.name: 0.0 for f in uploaded_files}
+                    
+                    def update_progress(filename: str, progress: float):
+                        file_status[filename] = progress
+                        overall_progress = sum(file_status.values()) / len(file_status)
+                        progress_bar.progress(overall_progress)
+                        status_text.text(f"Processing: {filename} ({progress*100:.0f}%)")
+                    
+                    # Process batch
+                    try:
+                        batch_processor = BatchProcessor(max_workers=3, max_files=10)
+                        summary = batch_processor.process_batch(
+                            temp_paths,
+                            framework=st.session_state.selected_frameworks[0] if st.session_state.selected_frameworks else "GDPR",
+                            progress_callback=update_progress
+                        )
+                        
+                        # Clean up temp files
+                        for path in temp_paths:
+                            try:
+                                os.unlink(path)
+                            except:
+                                pass
+                        
+                        progress_bar.progress(1.0)
+                        status_text.text("✅ Batch processing complete!")
+                        
+                        # Store batch results in session state
+                        st.session_state.batch_summary = summary
+                        st.session_state.batch_mode = True
+                        
+                        # Display summary
+                        st.success(f"✅ Processed {summary.successful}/{summary.total_files} files successfully in {summary.total_time:.2f}s")
+                        
+                        # Show summary metrics
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Total Files", summary.total_files)
+                        with col2:
+                            st.metric("Successful", summary.successful)
+                        with col3:
+                            st.metric("Failed", summary.failed)
+                        with col4:
+                            st.metric("Avg Time", f"{summary.avg_time_per_file:.1f}s")
+                        
+                        # Show aggregated compliance score
+                        agg_metrics = batch_processor.get_aggregated_compliance_score(summary)
+                        
+                        st.markdown("### 📊 Aggregated Compliance Score")
+                        score_col1, score_col2, score_col3 = st.columns(3)
+                        with score_col1:
+                            st.metric("Average Score", f"{agg_metrics['average_score']:.1f}%")
+                        with score_col2:
+                            st.metric("Total Issues", agg_metrics['total_issues'])
+                        with score_col3:
+                            high_risk = agg_metrics['high_risk_count']
+                            st.metric("High Risk Issues", high_risk, delta=None if high_risk == 0 else "❗")
+                        
+                        # Show individual file results
+                        st.markdown("### 📋 Individual File Results")
+                        for result in summary.results:
+                            with st.expander(f"{'✅' if result.success else '❌'} {result.filename}"):
+                                if result.success:
+                                    st.write(f"**Processing Time:** {result.processing_time:.2f}s")
+                                    if result.compliance_results:
+                                        score = result.compliance_results.get('overall_score', 0)
+                                        st.write(f"**Compliance Score:** {score:.1f}%")
+                                        missing = len(result.compliance_results.get('missing_clauses', []))
+                                        st.write(f"**Missing Clauses:** {missing}")
+                                else:
+                                    st.error(f"Error: {result.error}")
+                        
+                        # Export option
+                        st.markdown("### 💾 Export Batch Results")
+                        export_format = st.selectbox("Export Format", ["JSON", "CSV"])
+                        if st.button("📥 Export Results"):
+                            output_path = batch_processor.export_batch_results(
+                                summary,
+                                export_format.lower()
+                            )
+                            st.success(f"Results exported to: {output_path}")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Batch processing failed: {e}")
+                        logger.exception("Batch processing error")
+                        # Clean up temp files on error
+                        for path in temp_paths:
+                            try:
+                                os.unlink(path)
+                            except:
+                                pass
                 
         elif upload_method == "Text Input":
             contract_text = st.text_area(
