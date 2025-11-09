@@ -26,25 +26,36 @@ slack = SlackNotifier(default_channel="#general")
 if not slack.enabled:
     print("❌ Slack notifier not enabled")
     print("\nPossible reasons:")
-    print("  1. SLACK_ACCESS_TOKEN not set in .env")
+    print("  1. SLACK_WEBHOOK_URL or SLACK_BOT_TOKEN not set in .env")
     print("  2. slack-sdk not installed (run: pip install slack-sdk)")
-    print("  3. Invalid access token")
+    print("  3. Invalid access token or webhook URL")
     sys.exit(1)
 
 print(f"✅ Slack notifier initialized")
-print(f"   Team: {slack.team_name}")
-print(f"   Bot User ID: {slack.bot_user_id}")
+if slack.use_webhook:
+    print(f"   Mode: Webhook (works on all Slack plans)")
+    print(f"   Webhook URL: {slack.webhook_url[:50]}...")
+else:
+    print(f"   Mode: Bot Token")
+    print(f"   Team: {slack.team_name}")
+    print(f"   Bot User ID: {slack.bot_user_id}")
 print()
 
-# Test connection
-print("2. Testing Slack connection...")
-print("-" * 70)
-if slack.test_connection():
-    print("✅ Connection successful!")
+# Test connection (skip for webhook mode as it's send-only)
+if not slack.use_webhook:
+    print("2. Testing Slack connection...")
+    print("-" * 70)
+    if slack.test_connection():
+        print("✅ Connection successful!")
+    else:
+        print("❌ Connection failed")
+        sys.exit(1)
+    print()
 else:
-    print("❌ Connection failed")
-    sys.exit(1)
-print()
+    print("2. Webhook mode - skipping connection test (webhooks are send-only)")
+    print("-" * 70)
+    print("✅ Ready to send messages")
+    print()
 
 # Test 1: High-Risk Clause Alert
 print("3. Testing High-Risk Clause Alert...")

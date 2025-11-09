@@ -2,6 +2,8 @@
 Slack Notifier Service - Send real-time compliance alerts to Slack channels.
 """
 import os
+import json
+import requests
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from enum import Enum
@@ -36,25 +38,36 @@ class SlackNotifier:
     def __init__(
         self,
         access_token: Optional[str] = None,
+        webhook_url: Optional[str] = None,
         default_channel: str = "#compliance-alerts"
     ):
         """
         Initialize Slack notifier.
         
         Args:
-            access_token: Slack bot token (defaults to SLACK_ACCESS_TOKEN env var)
+            access_token: Slack bot token (defaults to SLACK_BOT_TOKEN or SLACK_ACCESS_TOKEN env var)
+            webhook_url: Slack webhook URL (defaults to SLACK_WEBHOOK_URL env var) - preferred for Free plans
             default_channel: Default channel for notifications
         """
-        self.access_token = access_token or os.getenv('SLACK_ACCESS_TOKEN')
+        self.webhook_url = webhook_url or os.getenv('SLACK_WEBHOOK_URL')
+        self.access_token = access_token or os.getenv('SLACK_BOT_TOKEN') or os.getenv('SLACK_ACCESS_TOKEN')
         self.default_channel = default_channel
         self.enabled = False
+        self.use_webhook = bool(self.webhook_url)
         
+        # Webhook mode (recommended for Free/Standard plans)
+        if self.use_webhook:
+            self.enabled = True
+            logger.info("Slack notifier initialized with webhook URL")
+            return
+        
+        # Bot token mode (for Enterprise or multi-channel)
         if not SLACK_AVAILABLE:
             logger.warning("Slack SDK not available. Notifications will be logged only.")
             return
         
         if not self.access_token:
-            logger.warning("SLACK_ACCESS_TOKEN not set. Slack notifications disabled.")
+            logger.warning("Neither SLACK_WEBHOOK_URL nor SLACK_BOT_TOKEN set. Slack notifications disabled.")
             return
         
         try:
@@ -114,6 +127,30 @@ class SlackNotifier:
             logger.info(f"[SLACK DISABLED] Would send to {channel}: {text}")
             return None
         
+        # Webhook mode - simpler, works on all Slack plans
+        if self.use_webhook:
+            try:
+                payload = {
+                    "text": text,
+                    "blocks": blocks
+                }
+                response = requests.post(
+                    self.webhook_url,
+                    json=payload,
+                    headers={'Content-Type': 'application/json'}
+                )
+                
+                if response.status_code == 200:
+                    logger.info(f"Webhook message sent successfully")
+                    return {"ok": True}
+                else:
+                    logger.error(f"Webhook error: {response.status_code} - {response.text}")
+                    return None
+            except Exception as e:
+                logger.error(f"Failed to send webhook message: {e}")
+                return None
+        
+        # Bot token mode - requires Enterprise for chat:write.public
         try:
             response = self.client.chat_postMessage(
                 channel=channel,
