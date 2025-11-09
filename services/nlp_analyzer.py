@@ -4,11 +4,21 @@ NLP Analyzer orchestrator that coordinates clause classification and embedding g
 from typing import List, Optional
 from models.clause import Clause
 from models.clause_analysis import ClauseAnalysis
-from services.legal_bert_classifier import LegalBERTClassifier
-from services.embedding_generator import EmbeddingGenerator
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Try to import transformers-based services, but make them optional
+try:
+    from services.legal_bert_classifier import LegalBERTClassifier
+    from services.embedding_generator import EmbeddingGenerator
+    TRANSFORMERS_AVAILABLE = True
+except (ImportError, AttributeError) as e:
+    logger.warning(f"Transformers library not available or incompatible: {e}")
+    logger.warning("NLP analysis will use fallback mode")
+    TRANSFORMERS_AVAILABLE = False
+    LegalBERTClassifier = None
+    EmbeddingGenerator = None
 
 
 class NLPAnalyzer:
@@ -19,8 +29,8 @@ class NLPAnalyzer:
     
     def __init__(
         self,
-        classifier: Optional[LegalBERTClassifier] = None,
-        embedding_generator: Optional[EmbeddingGenerator] = None,
+        classifier: Optional[object] = None,
+        embedding_generator: Optional[object] = None,
         confidence_threshold: float = 0.75
     ):
         """
@@ -31,8 +41,13 @@ class NLPAnalyzer:
             embedding_generator: Embedding generator instance (creates new if None)
             confidence_threshold: Minimum confidence for predictions (default 0.75)
         """
-        self.classifier = classifier or LegalBERTClassifier()
-        self.embedding_generator = embedding_generator or EmbeddingGenerator()
+        if TRANSFORMERS_AVAILABLE:
+            self.classifier = classifier or LegalBERTClassifier()
+            self.embedding_generator = embedding_generator or EmbeddingGenerator()
+        else:
+            self.classifier = None
+            self.embedding_generator = None
+            logger.warning("Running in fallback mode - transformers library not available")
         self.confidence_threshold = confidence_threshold
         logger.info(f"NLPAnalyzer initialized with confidence threshold: {confidence_threshold}")
     
@@ -48,6 +63,21 @@ class NLPAnalyzer:
         """
         try:
             logger.debug(f"Analyzing clause: {clause.clause_id}")
+            
+            # Fallback mode if transformers not available
+            if not TRANSFORMERS_AVAILABLE or not self.classifier or not self.embedding_generator:
+                logger.warning(f"Using fallback analysis for clause {clause.clause_id}")
+                return ClauseAnalysis(
+                    clause_id=clause.clause_id,
+                    predicted_type="general",
+                    confidence=0.5,
+                    alternative_predictions=[],
+                    embedding=[0.0] * 384,  # Empty embedding
+                    analysis_metadata={
+                        "method": "fallback",
+                        "reason": "transformers_unavailable"
+                    }
+                )
             
             # Classify clause type
             clause_type, confidence, alternatives = self.classifier.predict(clause.text)

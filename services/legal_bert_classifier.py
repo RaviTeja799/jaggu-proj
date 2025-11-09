@@ -2,13 +2,23 @@
 LegalBERT-based clause classification service.
 """
 import streamlit as st
-import torch
-from transformers import AutoTokenizer, AutoModel
 from typing import Tuple, List
 import numpy as np
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Try to import torch and transformers, make them optional
+try:
+    import torch
+    from transformers import AutoTokenizer, AutoModel
+    TRANSFORMERS_AVAILABLE = True
+except (ImportError, AttributeError) as e:
+    logger.warning(f"torch/transformers not available: {e}")
+    TRANSFORMERS_AVAILABLE = False
+    torch = None
+    AutoTokenizer = None
+    AutoModel = None
 
 
 class LegalBERTClassifier:
@@ -22,12 +32,19 @@ class LegalBERTClassifier:
             model_name: Hugging Face model identifier
         """
         self.model_name = model_name
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info(f"Using device: {self.device}")
         
-        # Load model and tokenizer with caching
-        self.model = self._load_model()
-        self.tokenizer = self._load_tokenizer()
+        if TRANSFORMERS_AVAILABLE and torch is not None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            logger.info(f"Using device: {self.device}")
+            
+            # Load model and tokenizer with caching
+            self.model = self._load_model()
+            self.tokenizer = self._load_tokenizer()
+        else:
+            self.device = None
+            self.model = None
+            self.tokenizer = None
+            logger.warning("LegalBERTClassifier running in fallback mode - using keyword-based classification")
         
         # Define clause type mappings for classification
         self.clause_types = [
@@ -81,6 +98,10 @@ class LegalBERTClassifier:
         Returns:
             Loaded model
         """
+        if not TRANSFORMERS_AVAILABLE or AutoModel is None:
+            logger.warning("Transformers not available, returning None")
+            return None
+            
         try:
             logger.info(f"Loading LegalBERT model: {_self.model_name}")
             model = AutoModel.from_pretrained(_self.model_name)
@@ -90,7 +111,8 @@ class LegalBERTClassifier:
             return model
         except Exception as e:
             logger.error(f"Error loading LegalBERT model: {e}")
-            raise
+            logger.warning("Falling back to keyword-based classification")
+            return None
     
     @st.cache_resource
     def _load_tokenizer(_self):
@@ -100,6 +122,10 @@ class LegalBERTClassifier:
         Returns:
             Loaded tokenizer
         """
+        if not TRANSFORMERS_AVAILABLE or AutoTokenizer is None:
+            logger.warning("Transformers not available, returning None")
+            return None
+            
         try:
             logger.info(f"Loading tokenizer: {_self.model_name}")
             tokenizer = AutoTokenizer.from_pretrained(_self.model_name)
@@ -146,6 +172,24 @@ class LegalBERTClassifier:
             where alternatives is a list of (type, score) tuples
         """
         try:
+            # If transformers not available or model failed to load, use keyword-based only
+            if not TRANSFORMERS_AVAILABLE or self.model is None or self.tokenizer is None:
+                logger.debug("Using keyword-based classification (transformers unavailable)")
+                keyword_scores = self._keyword_based_classification(text)
+                
+                if not keyword_scores or keyword_scores[0][1] == 0.0:
+                    predicted_type = "Other"
+                    confidence = 0.5
+                    alternatives = [("Other", 0.5)]
+                else:
+                    predicted_type = keyword_scores[0][0]
+                    raw_score = keyword_scores[0][1]
+                    confidence = min(0.95, 0.5 + (raw_score * 0.45))
+                    alternatives = [(t, min(0.95, 0.5 + (s * 0.45))) 
+                                   for t, s in keyword_scores[:top_k]]
+                
+                return predicted_type, confidence, alternatives
+            
             # Use keyword-based classification
             # In a production system, this would use the actual LegalBERT model
             # for sequence classification. For now, we use keyword matching

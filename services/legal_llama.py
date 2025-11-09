@@ -2,8 +2,6 @@
 LegalLLaMA service for generating recommendations and compliant clause text.
 Implements LLaMA model integration with GPU detection and caching.
 """
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from typing import Optional, Dict, Any
 import time
 
@@ -11,6 +9,18 @@ from config.settings import config
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Try to import torch and transformers, make them optional
+try:
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    TRANSFORMERS_AVAILABLE = True
+except (ImportError, AttributeError) as e:
+    logger.warning(f"torch/transformers not available for LegalLLaMA: {e}")
+    TRANSFORMERS_AVAILABLE = False
+    torch = None
+    AutoModelForCausalLM = None
+    AutoTokenizer = None
 
 
 class LegalLLaMA:
@@ -44,6 +54,15 @@ class LegalLLaMA:
         self.temperature = temperature or config.llm.temperature
         self.top_p = config.llm.top_p
         
+        # Check if transformers available
+        if not TRANSFORMERS_AVAILABLE:
+            logger.warning("LegalLLaMA running in fallback mode - transformers not available")
+            self.device = "cpu"
+            self.model = None
+            self.tokenizer = None
+            logger.info("LegalLLaMA initialized in fallback mode")
+            return
+        
         # Detect device
         self.device = self._detect_device()
         logger.info(f"Using device: {self.device}")
@@ -62,6 +81,9 @@ class LegalLLaMA:
         Returns:
             Device string ('cuda' or 'cpu')
         """
+        if not TRANSFORMERS_AVAILABLE or torch is None:
+            return "cpu"
+            
         if self.use_gpu and torch.cuda.is_available():
             logger.info("GPU detected and enabled")
             return "cuda"
@@ -77,6 +99,10 @@ class LegalLLaMA:
         Load LLaMA model and tokenizer.
         Implements caching and error handling.
         """
+        if not TRANSFORMERS_AVAILABLE or AutoModelForCausalLM is None or AutoTokenizer is None:
+            logger.warning("Cannot load model - transformers not available")
+            return
+            
         try:
             start_time = time.time()
             logger.info(f"Loading model: {self.model_name}")
@@ -146,8 +172,9 @@ class LegalLLaMA:
         Returns:
             Generated text
         """
-        if self.model is None or self.tokenizer is None:
-            raise RuntimeError("Model not loaded. Call _load_model() first.")
+        if not TRANSFORMERS_AVAILABLE or self.model is None or self.tokenizer is None:
+            logger.warning("Model not available, returning fallback text")
+            return f"[LLaMA unavailable] Fallback response for prompt: {prompt[:100]}..."
         
         try:
             start_time = time.time()
@@ -217,6 +244,15 @@ class LegalLLaMA:
         Returns:
             Dictionary with analysis results
         """
+        if not TRANSFORMERS_AVAILABLE or self.model is None:
+            logger.warning("LLaMA not available for compliance analysis")
+            return {
+                'raw_response': '[LLaMA unavailable] Basic analysis',
+                'compliant': False,
+                'issues': ['Unable to perform detailed analysis - AI model unavailable'],
+                'confidence': 0.5
+            }
+            
         try:
             prompt = self._build_analysis_prompt(clause_text, regulatory_context)
             
