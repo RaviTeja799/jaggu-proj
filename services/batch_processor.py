@@ -12,6 +12,7 @@ from services.document_processor import DocumentProcessor, DocumentProcessingErr
 from services.nlp_analyzer import NLPAnalyzer
 from services.compliance_checker import ComplianceChecker
 from services.recommendation_engine import RecommendationEngine
+from services.slack_notifier import SlackNotifier
 from models.processed_document import ProcessedDocument
 from utils.logger import get_logger
 
@@ -50,7 +51,9 @@ class BatchProcessor:
     def __init__(
         self,
         max_workers: int = 4,
-        max_files: int = 10
+        max_files: int = 10,
+        enable_slack: bool = True,
+        slack_channel: Optional[str] = None
     ):
         """
         Initialize batch processor.
@@ -58,6 +61,8 @@ class BatchProcessor:
         Args:
             max_workers: Maximum number of parallel workers
             max_files: Maximum number of files to process in one batch
+            enable_slack: Enable Slack notifications
+            slack_channel: Slack channel for notifications
         """
         self.max_workers = max_workers
         self.max_files = max_files
@@ -68,7 +73,10 @@ class BatchProcessor:
         self.compliance_checker = ComplianceChecker()
         self.recommendation_engine = RecommendationEngine(use_llama=False)
         
-        logger.info(f"BatchProcessor initialized (max_workers={max_workers}, max_files={max_files})")
+        # Initialize Slack notifier
+        self.slack_notifier = SlackNotifier(default_channel=slack_channel or "#compliance-alerts") if enable_slack else None
+        
+        logger.info(f"BatchProcessor initialized (max_workers={max_workers}, max_files={max_files}, slack={enable_slack})")
     
     def process_file(
         self,
@@ -228,6 +236,18 @@ class BatchProcessor:
             f"Batch processing complete: {successful}/{len(file_paths)} successful "
             f"in {total_time:.2f}s (avg {avg_time:.2f}s/file)"
         )
+        
+        # Send Slack notification if enabled
+        if self.slack_notifier and self.slack_notifier.enabled:
+            agg_metrics = self.get_aggregated_compliance_score(summary)
+            self.slack_notifier.notify_batch_complete(
+                total_files=summary.total_files,
+                successful=summary.successful,
+                failed=summary.failed,
+                total_time=summary.total_time,
+                avg_compliance_score=agg_metrics['average_score'],
+                high_risk_count=agg_metrics['high_risk_count']
+            )
         
         return summary
     
