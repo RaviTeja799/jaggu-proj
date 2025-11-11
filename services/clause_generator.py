@@ -9,6 +9,7 @@ from models.regulatory_requirement import RegulatoryRequirement
 from models.clause_analysis import ClauseAnalysis
 from services.legal_llama import LegalLLaMA
 from services.prompt_builder import PromptBuilder
+from services.groq_api_client import GroqAPIClient
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,35 +24,60 @@ class ClauseGenerator:
     def __init__(
         self,
         llama_model: Optional[LegalLLaMA] = None,
-        prompt_builder: Optional[PromptBuilder] = None
+        prompt_builder: Optional[PromptBuilder] = None,
+        use_groq: bool = True
     ):
         """
         Initialize ClauseGenerator.
         
         Args:
-            llama_model: LegalLLaMA instance (optional)
+            llama_model: LegalLLaMA instance (optional, for local models)
             prompt_builder: PromptBuilder instance (optional)
+            use_groq: Use Groq API for generation (default: True)
         """
         logger.info("Initializing ClauseGenerator...")
         
         self.llama = llama_model
         self.prompt_builder = prompt_builder or PromptBuilder()
+        self.use_groq = use_groq
         
-        # Lazy loading flag
+        # Initialize Groq client if using API
+        if use_groq:
+            try:
+                from services.groq_api_client import GroqAPIClient
+                self.groq_client = GroqAPIClient()
+                logger.info("ClauseGenerator using Groq API for LLaMA 3.3 70B inference")
+            except Exception as e:
+                logger.error(f"Failed to initialize Groq client: {e}")
+                self.groq_client = None
+                self.use_groq = False
+        else:
+            self.groq_client = None
+        
+        # Lazy loading flag for local model
         self._llama_loaded = llama_model is not None
         
-        logger.info("ClauseGenerator initialized")
+        logger.info(f"ClauseGenerator initialized (Groq: {self.use_groq})")
     
     def _ensure_llama_loaded(self):
-        """Ensure LLaMA model is loaded (lazy loading)."""
+        """Ensure LLaMA model is available (local or API)."""
+        if self.use_groq and self.groq_client:
+            # Using Groq API, always ready
+            return
+        
         if not self._llama_loaded:
-            logger.info("Loading LLaMA model (lazy initialization)...")
+            logger.info("Loading local LLaMA model (lazy initialization)...")
             try:
                 self.llama = LegalLLaMA()
                 self._llama_loaded = True
             except Exception as e:
-                logger.error(f"Failed to load LLaMA model: {e}")
-                raise RuntimeError(f"Cannot generate clauses without LLaMA: {e}")
+                logger.error(f"Failed to load local LLaMA model: {e}")
+                # Try to fallback to Groq if available
+                if self.groq_client:
+                    logger.info("Falling back to Groq API")
+                    self.use_groq = True
+                else:
+                    raise RuntimeError(f"Cannot generate clauses without LLaMA: {e}")
     
     def generate_clause_text(
         self,
@@ -92,12 +118,15 @@ class ClauseGenerator:
                 existing_texts
             )
             
-            # Generate with LLaMA
-            generated_text = self.llama.generate(
-                prompt,
-                max_tokens=400,
-                temperature=0.7
-            )
+            # Generate with Groq API or local LLaMA
+            if self.use_groq and self.groq_client:
+                generated_text = self._generate_with_groq(prompt, max_tokens=400)
+            else:
+                generated_text = self.llama.generate(
+                    prompt,
+                    max_tokens=400,
+                    temperature=0.7
+                )
             
             # Post-process for legal formatting
             formatted_text = self._post_process_clause(generated_text, requirement)
@@ -110,6 +139,45 @@ class ClauseGenerator:
             logger.error(f"Error generating clause text: {e}", exc_info=True)
             # Return fallback template
             return self._generate_fallback_clause(requirement)
+    
+    def _generate_with_groq(self, prompt: str, max_tokens: int = 400) -> str:
+        """
+        Generate text using Groq API.
+        
+        Args:
+            prompt: Generation prompt
+            max_tokens: Maximum tokens to generate
+            
+        Returns:
+            Generated text
+        """
+        try:
+            response = self.groq_client.chat_completion(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an expert legal contract writer specializing in regulatory compliance. "
+                            "Generate clear, precise, and legally sound contract clauses that comply with "
+                            "all applicable regulations. Use professional legal language and structure."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.7,
+                max_tokens=max_tokens
+            )
+            
+            generated_text = response['choices'][0]['message']['content']
+            return generated_text
+            
+        except Exception as e:
+            logger.error(f"Groq API generation failed: {e}")
+            raise
     
     def generate_modification_text(
         self,
@@ -142,12 +210,15 @@ class ClauseGenerator:
                 issues
             )
             
-            # Generate with LLaMA
-            modified_text = self.llama.generate(
-                prompt,
-                max_tokens=400,
-                temperature=0.6  # Lower temperature for modifications
-            )
+            # Generate with Groq API or local LLaMA
+            if self.use_groq and self.groq_client:
+                modified_text = self._generate_with_groq(prompt, max_tokens=400)
+            else:
+                modified_text = self.llama.generate(
+                    prompt,
+                    max_tokens=400,
+                    temperature=0.6  # Lower temperature for modifications
+                )
             
             # Post-process
             formatted_text = self._post_process_modification(
