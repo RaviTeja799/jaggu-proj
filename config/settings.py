@@ -47,6 +47,36 @@ class LLMConfig:
 
 
 @dataclass
+class APIConfig:
+    """Configuration for external APIs."""
+    serper_api_key: Optional[str] = None
+    groq_api_key: Optional[str] = None
+    huggingface_api_key: Optional[str] = None
+    openrouter_api_key: Optional[str] = None
+    slack_webhook_url: Optional[str] = None
+    
+    def __post_init__(self):
+        """Load API keys from environment."""
+        import os
+        self.serper_api_key = self.serper_api_key or os.getenv('SERPER_API_KEY')
+        self.groq_api_key = self.groq_api_key or os.getenv('GROQ_API_KEY')
+        self.huggingface_api_key = self.huggingface_api_key or os.getenv('HUGGINGFACE_API_KEY')
+        self.openrouter_api_key = self.openrouter_api_key or os.getenv('OPENROUTER_API_KEY')
+        self.slack_webhook_url = self.slack_webhook_url or os.getenv('SLACK_WEBHOOK_URL')
+
+
+@dataclass
+class RegulatoryMonitoringConfig:
+    """Configuration for regulatory update monitoring."""
+    enabled: bool = True
+    check_interval_hours: int = 24
+    time_range: str = 'w'  # 'd', 'w', 'm', 'y'
+    auto_check_on_startup: bool = False
+    max_results_per_source: int = 10
+    min_severity_alert: str = 'MEDIUM'
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     app_name: str = "AI-Powered Regulatory Compliance Checker"
@@ -59,6 +89,8 @@ class AppConfig:
     processing: ProcessingConfig = field(default_factory=ProcessingConfig)
     compliance: ComplianceConfig = field(default_factory=ComplianceConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    api: APIConfig = field(default_factory=APIConfig)
+    regulatory_monitoring: RegulatoryMonitoringConfig = field(default_factory=RegulatoryMonitoringConfig)
     
     # Paths
     base_dir: Path = field(default_factory=lambda: Path(__file__).parent.parent)
