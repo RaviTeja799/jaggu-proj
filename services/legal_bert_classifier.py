@@ -126,6 +126,7 @@ class LegalBERTClassifier:
             
             # IP/License terms -> Data Subject Rights (control/access)
             "IP Ownership Assignment": "Data Subject Rights",
+            "IP Ownership": "Data Subject Rights",  # Common variant
             "Joint IP Ownership": "Data Subject Rights",
             "License Grant": "Data Subject Rights",
             "Non-Transferable License": "Data Subject Rights",
@@ -146,7 +147,38 @@ class LegalBERTClassifier:
             "Warranty Duration": "Security Safeguards",
             "Insurance": "Security Safeguards",
             "Covenant Not to Sue": "Breach Notification",
-            "Third Party Beneficiary": "Sub-processor Authorization"
+            "Third Party Beneficiary": "Sub-processor Authorization",
+            
+            # Security/Confidentiality -> Security Safeguards
+            "Confidentiality": "Security Safeguards",
+            "Confidential Information": "Security Safeguards",
+            "Data Security": "Security Safeguards",
+            "Security Requirements": "Security Safeguards",
+            "Encryption": "Security Safeguards",
+            
+            # Indemnification -> Breach Notification (liability for breaches)
+            "Indemnification": "Breach Notification",
+            "Mutual Indemnification": "Breach Notification",
+            
+            # Termination -> Data Processing (processing duration/termination)
+            "Termination": "Data Processing",
+            "Termination Rights": "Data Processing",
+            "Termination for Cause": "Data Processing",
+            
+            # Payment terms -> Data Processing (service terms)
+            "Payment Terms": "Data Processing",
+            "Payment": "Data Processing",
+            "Fees": "Data Processing",
+            
+            # Warranties -> Security Safeguards
+            "Warranties": "Security Safeguards",
+            "Warranty": "Security Safeguards",
+            "Disclaimer of Warranties": "Security Safeguards",
+            
+            # General/catch-all -> Data Processing (contract performance)
+            "General": "Data Processing",
+            "Miscellaneous": "Data Processing",
+            "Definitions": None  # Metadata - just definitions
         }
         
         # Keywords for rule-based classification assistance
