@@ -37,7 +37,7 @@ class ComplianceConfig:
     """Configuration for compliance checking."""
     enabled_frameworks: list = field(default_factory=lambda: ['GDPR', 'HIPAA', 'CCPA', 'SOX'])
     risk_tolerance: str = 'Medium'  # Low, Medium, High
-    similarity_threshold: float = 0.75
+    similarity_threshold: float = 0.50  # Lowered from 0.75 for better clause matching
     min_clause_length: int = 20
 
 
