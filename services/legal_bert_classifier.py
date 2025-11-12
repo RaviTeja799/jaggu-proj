@@ -45,32 +45,53 @@ class LegalBERTClassifier:
         self.clause_keywords = {
             "Data Processing": [
                 "process", "processing", "processor", "controller", "instructions",
-                "documented instructions", "personal data processing"
+                "documented instructions", "personal data processing", "data controller",
+                "data processor", "processing activities", "lawful basis"
             ],
             "Sub-processor Authorization": [
-                "sub-processor", "subprocessor", "authorization", "prior written",
-                "notification", "object", "third party processor"
+                "sub-processor", "subprocessor", "sub processor", "authorization", "prior written",
+                "notification", "object", "third party processor", "engage third party",
+                "downstream processor", "subcontractor"
             ],
             "Data Subject Rights": [
                 "data subject", "rights", "access", "rectification", "erasure",
-                "portability", "restriction", "objection"
+                "portability", "restriction", "objection", "right to", "individual rights",
+                "access request", "deletion request", "right to be forgotten"
             ],
             "Breach Notification": [
                 "breach", "notification", "notify", "security breach", "incident",
-                "data breach", "unauthorized access"
+                "data breach", "unauthorized access", "breach response", "incident response",
+                "72 hours", "without undue delay", "security incident"
             ],
             "Data Transfer": [
                 "transfer", "cross-border", "third country", "international",
-                "standard contractual clauses", "adequacy decision"
+                "standard contractual clauses", "adequacy decision", "SCC", "SCCs",
+                "international transfer", "outside", "data export", "transfer mechanism"
             ],
             "Security Safeguards": [
                 "security", "safeguards", "measures", "technical", "organizational",
-                "encryption", "pseudonymization", "confidentiality"
+                "encryption", "pseudonymization", "confidentiality", "integrity",
+                "availability", "security measures", "technical and organizational measures",
+                "access controls", "authentication", "backup"
             ],
             "Permitted Uses and Disclosures": [
                 "permitted", "allowed", "disclosure", "use", "purpose",
-                "authorized use", "permitted disclosure"
+                "authorized use", "permitted disclosure", "lawful purpose",
+                "legitimate interest", "specific purpose", "purpose limitation"
             ]
+        }
+        
+        # Phrase weights - longer/more specific phrases get higher weight
+        self.phrase_weights = {
+            "technical and organizational measures": 3.0,
+            "documented instructions": 2.5,
+            "standard contractual clauses": 2.5,
+            "data subject rights": 2.5,
+            "sub-processor": 2.0,
+            "security breach": 2.0,
+            "cross-border": 2.0,
+            "personal data": 1.5,
+            "processing": 1.0
         }
     
     @st.cache_resource
@@ -111,7 +132,8 @@ class LegalBERTClassifier:
     
     def _keyword_based_classification(self, text: str) -> List[Tuple[str, float]]:
         """
-        Perform keyword-based classification as a fallback or supplement.
+        Perform enhanced keyword-based classification.
+        Uses weighted phrase matching for better accuracy.
         
         Args:
             text: Clause text to classify
@@ -123,11 +145,25 @@ class LegalBERTClassifier:
         scores = {}
         
         for clause_type, keywords in self.clause_keywords.items():
-            # Count keyword matches
-            matches = sum(1 for keyword in keywords if keyword in text_lower)
-            # Normalize by number of keywords
-            score = matches / len(keywords) if keywords else 0.0
-            scores[clause_type] = score
+            total_score = 0.0
+            
+            # Check each keyword/phrase
+            for keyword in keywords:
+                if keyword in text_lower:
+                    # Apply weight if phrase is in weight dict
+                    weight = self.phrase_weights.get(keyword, 1.0)
+                    
+                    # Bonus for exact phrase match (not just substring)
+                    if f" {keyword} " in f" {text_lower} ":
+                        weight *= 1.5
+                    
+                    total_score += weight
+            
+            # Normalize by total possible score for this category
+            max_possible_score = sum(self.phrase_weights.get(kw, 1.0) for kw in keywords)
+            normalized_score = total_score / max_possible_score if max_possible_score > 0 else 0.0
+            
+            scores[clause_type] = normalized_score
         
         # Sort by score descending
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)

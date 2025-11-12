@@ -1039,11 +1039,11 @@ with tab3:
                     
                     with col4:
                         if result.compliance_status.value != 'Compliant':
-                            fix_key = f"fix_{result.clause_id}"
+                            fix_key = f"fix_{result.framework}_{result.clause_id}"
                             if st.button("🛠️ Fix", key=fix_key, use_container_width=True):
                                 st.session_state[f"show_fix_{result.clause_id}"] = True
                         else:
-                            st.button("✅ OK", key=f"ok_{result.clause_id}", use_container_width=True, disabled=True)
+                            st.button("✅ OK", key=f"ok_{result.framework}_{result.clause_id}", use_container_width=True, disabled=True)
                     
                     # Show clause text
                     st.markdown("**Clause Text:**")
@@ -1051,7 +1051,7 @@ with tab3:
                         "Clause",
                         value=result.clause_text[:500] + ("..." if len(result.clause_text) > 500 else ""),
                         height=100,
-                        key=f"text_{result.clause_id}",
+                        key=f"text_{result.framework}_{result.clause_id}",
                         disabled=True
                     )
                     
