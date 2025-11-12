@@ -1831,7 +1831,7 @@ with tab6:
             
             use_gpu = st.checkbox(
                 "Use GPU acceleration",
-                value=config.processing_config.use_gpu if config_loaded else False,
+                value=config.models.use_gpu if config_loaded else False,
                 help="Faster processing with GPU (requires CUDA)"
             )
             
@@ -1839,7 +1839,7 @@ with tab6:
                 "Max File Size (MB)",
                 min_value=1,
                 max_value=100,
-                value=config.processing_config.max_file_size_mb if config_loaded else 10,
+                value=config.processing.max_file_size_mb if config_loaded else 10,
                 help="Maximum allowed file size for upload"
             )
         
@@ -1853,14 +1853,14 @@ with tab6:
             if config_loaded:
                 st.text_input(
                     "Legal BERT Model",
-                    value=config.model_config.legal_bert_model,
+                    value=config.models.legal_bert_model,
                     disabled=True,
                     help="NLP model for legal text analysis"
                 )
                 
                 st.text_input(
                     "LLaMA Model",
-                    value=config.model_config.llama_model,
+                    value=config.models.llama_model,
                     disabled=True,
                     help="Large language model for generation"
                 )
@@ -1869,7 +1869,7 @@ with tab6:
             if config_loaded:
                 st.text_input(
                     "Sentence Transformer",
-                    value=config.model_config.sentence_transformer_model,
+                    value=config.models.sentence_transformer_model,
                     disabled=True,
                     help="Model for semantic similarity"
                 )
@@ -1919,7 +1919,7 @@ with tab6:
             if slack_enabled:
                 slack_webhook = st.text_input(
                     "Webhook URL",
-                    value=config.api_config.slack_webhook_url if config_loaded and config.api_config.slack_webhook_url else "",
+                    value=config.api.slack_webhook_url if config_loaded and config.api.slack_webhook_url else "",
                     type="password",
                     help="Slack webhook URL for notifications"
                 )
@@ -2033,17 +2033,20 @@ with tab6:
             
             notify_critical = st.checkbox(
                 "Notify on CRITICAL updates",
-                value=True
+                value=True,
+                key="settings_notify_critical"
             )
             
             notify_high = st.checkbox(
                 "Notify on HIGH severity updates",
-                value=True
+                value=True,
+                key="settings_notify_high"
             )
             
             notify_medium = st.checkbox(
                 "Notify on MEDIUM severity updates",
-                value=False
+                value=False,
+                key="settings_notify_medium"
             )
             
             st.markdown("---")
@@ -2069,9 +2072,9 @@ with tab6:
         with col1:
             st.markdown("#### 🔍 Serper API (Web Search)")
             
-            if config_loaded and config.api_config.serper_api_key:
+            if config_loaded and config.api.serper_api_key:
                 st.success("✅ Serper API key configured")
-                masked_key = config.api_config.serper_api_key[:8] + "..." + config.api_config.serper_api_key[-4:]
+                masked_key = config.api.serper_api_key[:8] + "..." + config.api.serper_api_key[-4:]
                 st.code(masked_key)
             else:
                 st.error("❌ Serper API key not found")
@@ -2081,9 +2084,9 @@ with tab6:
             
             st.markdown("#### 🤖 Groq API (LLaMA Inference)")
             
-            if config_loaded and config.api_config.groq_api_key:
+            if config_loaded and config.api.groq_api_key:
                 st.success("✅ Groq API key configured")
-                masked_key = config.api_config.groq_api_key[:8] + "..." + config.api_config.groq_api_key[-4:]
+                masked_key = config.api.groq_api_key[:8] + "..." + config.api.groq_api_key[-4:]
                 st.code(masked_key)
             else:
                 st.error("❌ Groq API key not found")
@@ -2092,9 +2095,9 @@ with tab6:
         with col2:
             st.markdown("#### 💬 Slack Integration")
             
-            if config_loaded and config.api_config.slack_webhook_url:
+            if config_loaded and config.api.slack_webhook_url:
                 st.success("✅ Slack webhook configured")
-                masked_url = config.api_config.slack_webhook_url[:30] + "..."
+                masked_url = config.api.slack_webhook_url[:30] + "..."
                 st.code(masked_url)
             else:
                 st.warning("⚠️ Slack webhook not configured")
