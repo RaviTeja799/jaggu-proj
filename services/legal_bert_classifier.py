@@ -88,11 +88,66 @@ class LegalBERTClassifier:
             "Warranty Duration",
             "Insurance",
             "Covenant Not to Sue",
-            "Third Party Beneficiary",
-            
-            # Catch-all
-            "Other"
+            "Third Party Beneficiary"
         ]
+        
+        # CUAD to Regulatory Clause Type Mapping
+        # Maps CUAD clause types to original 7 regulatory types for compliance scoring
+        # This allows CUAD clauses to be matched against GDPR/HIPAA/SOX/CCPA requirements
+        self.cuad_to_regulatory_mapping = {
+            # Metadata types -> not directly compliance-related (return None = skip scoring)
+            "Document Name": None,
+            "Parties": None,
+            "Agreement Date": None,
+            "Effective Date": None,
+            "Expiration Date": None,
+            
+            # Business/operational terms that relate to data processing
+            "Renewal Term": "Data Processing",
+            "Notice to Terminate Renewal": "Data Processing",
+            "Governing Law": "Data Transfer",
+            "Most Favored Nation": "Data Processing",
+            "Non-Compete": "Permitted Uses and Disclosures",
+            "Exclusivity": "Permitted Uses and Disclosures",
+            "No-Solicit of Customers": "Permitted Uses and Disclosures",
+            "Competitive Restriction Exception": "Permitted Uses and Disclosures",
+            "No-Solicit of Employees": "Permitted Uses and Disclosures",
+            "Non-Disparagement": "Permitted Uses and Disclosures",
+            "Termination for Convenience": "Data Processing",
+            "ROFR/ROFO/ROFN": "Data Processing",
+            "Change of Control": "Sub-processor Authorization",
+            "Anti-Assignment": "Sub-processor Authorization",
+            
+            # Financial terms -> Data Processing (contract terms)
+            "Revenue/Profit Sharing": "Data Processing",
+            "Price Restriction": "Data Processing",
+            "Minimum Commitment": "Data Processing",
+            "Volume Restriction": "Data Processing",
+            
+            # IP/License terms -> Data Subject Rights (control/access)
+            "IP Ownership Assignment": "Data Subject Rights",
+            "Joint IP Ownership": "Data Subject Rights",
+            "License Grant": "Data Subject Rights",
+            "Non-Transferable License": "Data Subject Rights",
+            "Affiliate IP License-Licensor": "Sub-processor Authorization",
+            "Affiliate IP License-Licensee": "Sub-processor Authorization",
+            "Unlimited/All-You-Can-Eat License": "Data Subject Rights",
+            "Irrevocable or Perpetual License": "Data Subject Rights",
+            "Source Code Escrow": "Security Safeguards",
+            
+            # Service terms
+            "Post-Termination Services": "Data Processing",
+            "Audit Rights": "Security Safeguards",
+            
+            # Liability/Insurance -> Security/Breach related
+            "Uncapped Liability": "Breach Notification",
+            "Cap on Liability": "Breach Notification",
+            "Liquidated Damages": "Breach Notification",
+            "Warranty Duration": "Security Safeguards",
+            "Insurance": "Security Safeguards",
+            "Covenant Not to Sue": "Breach Notification",
+            "Third Party Beneficiary": "Sub-processor Authorization"
+        }
         
         # Keywords for rule-based classification assistance
         # Expanded with CUAD dataset categories for comprehensive contract understanding
@@ -470,6 +525,50 @@ class LegalBERTClassifier:
         # Sort by score descending
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         return sorted_scores
+    
+    def get_regulatory_clause_type(self, cuad_clause_type: str) -> str:
+        """
+        Get the regulatory clause type for a CUAD clause type.
+        
+        This maps CUAD-specific clause types (e.g., "Non-Compete", "Audit Rights")
+        to the original 7 regulatory clause types that have requirements defined
+        in the knowledge base (e.g., "Data Processing", "Security Safeguards").
+        
+        Args:
+            cuad_clause_type: The CUAD clause type from classification
+            
+        Returns:
+            The corresponding regulatory clause type, or the original type if it's
+            already a regulatory type, or the original type if no mapping exists.
+        """
+        # If it's already one of the original 7 types, return as-is
+        original_types = {
+            "Data Processing",
+            "Sub-processor Authorization", 
+            "Data Subject Rights",
+            "Breach Notification",
+            "Data Transfer",
+            "Security Safeguards",
+            "Permitted Uses and Disclosures"
+        }
+        
+        if cuad_clause_type in original_types:
+            return cuad_clause_type
+        
+        # Check if it's a CUAD type with a mapping
+        mapped_type = self.cuad_to_regulatory_mapping.get(cuad_clause_type)
+        
+        if mapped_type is None:
+            # Metadata type - no compliance requirements
+            logger.debug(f"Clause type '{cuad_clause_type}' is metadata - no regulatory mapping")
+            return None
+        elif mapped_type:
+            logger.debug(f"Mapped CUAD type '{cuad_clause_type}' -> '{mapped_type}'")
+            return mapped_type
+        else:
+            # Unknown type - return as-is and let matching handle it
+            logger.warning(f"No mapping found for clause type: {cuad_clause_type}")
+            return cuad_clause_type
     
     def predict(self, text: str, top_k: int = 3) -> Tuple[str, float, List[Tuple[str, float]]]:
         """

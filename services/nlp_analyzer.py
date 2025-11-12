@@ -52,6 +52,19 @@ class NLPAnalyzer:
             # Classify clause type
             clause_type, confidence, alternatives = self.classifier.predict(clause.text)
             
+            # Map CUAD types to regulatory types for compliance scoring
+            regulatory_type = self.classifier.get_regulatory_clause_type(clause_type)
+            
+            # If no regulatory mapping (metadata type), use original type
+            final_clause_type = regulatory_type if regulatory_type is not None else clause_type
+            
+            # Log mapping if different
+            if clause_type != final_clause_type:
+                logger.debug(
+                    f"Clause {clause.clause_id}: CUAD type '{clause_type}' "
+                    f"mapped to regulatory type '{final_clause_type}' for compliance scoring"
+                )
+            
             # Generate embedding
             embedding = self.embedding_generator.generate_embedding(clause.text)
             
@@ -62,19 +75,19 @@ class NLPAnalyzer:
                     f"Classified as '{clause_type}'. Consider manual review."
                 )
             
-            # Create analysis result
+            # Create analysis result with regulatory type for matching
             analysis = ClauseAnalysis(
                 clause_id=clause.clause_id,
                 clause_text=clause.text,
-                clause_type=clause_type,
+                clause_type=final_clause_type,  # Use regulatory type for matching
                 confidence_score=confidence,
                 embeddings=embedding,
                 alternative_types=alternatives
             )
             
             logger.info(
-                f"Clause {clause.clause_id} analyzed: type='{clause_type}', "
-                f"confidence={confidence:.2f}"
+                f"Clause {clause.clause_id} analyzed: original_type='{clause_type}', "
+                f"regulatory_type='{final_clause_type}', confidence={confidence:.2f}"
             )
             
             return analysis
@@ -152,10 +165,23 @@ class NLPAnalyzer:
                 clauses, classifications, embeddings
             ):
                 try:
+                    # Map CUAD types to regulatory types for compliance scoring
+                    regulatory_type = self.classifier.get_regulatory_clause_type(clause_type)
+                    
+                    # If no regulatory mapping (metadata type), use original type
+                    final_clause_type = regulatory_type if regulatory_type is not None else clause_type
+                    
+                    # Log mapping if different
+                    if clause_type != final_clause_type:
+                        logger.debug(
+                            f"Clause {clause.clause_id}: CUAD type '{clause_type}' "
+                            f"mapped to regulatory type '{final_clause_type}'"
+                        )
+                    
                     analysis = ClauseAnalysis(
                         clause_id=clause.clause_id,
                         clause_text=clause.text,
-                        clause_type=clause_type,
+                        clause_type=final_clause_type,  # Use regulatory type for matching
                         confidence_score=confidence,
                         embeddings=embedding,
                         alternative_types=alternatives
