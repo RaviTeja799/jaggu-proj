@@ -91,9 +91,10 @@ class LegalBERTClassifier:
             "Third Party Beneficiary"
         ]
         
-        # CUAD to Regulatory Clause Type Mapping
+        # CUAD to Regulatory Clause Type Mapping (v2.0 - 61 mappings)
         # Maps CUAD clause types to original 7 regulatory types for compliance scoring
         # This allows CUAD clauses to be matched against GDPR/HIPAA/SOX/CCPA requirements
+        self.cuad_mapping_version = "2.0"  # Version tracking for debugging
         self.cuad_to_regulatory_mapping = {
             # Metadata types -> not directly compliance-related (return None = skip scoring)
             "Document Name": None,
@@ -180,6 +181,12 @@ class LegalBERTClassifier:
             "Miscellaneous": "Data Processing",
             "Definitions": None  # Metadata - just definitions
         }
+        
+        # Log mapping version for debugging
+        logger.info(
+            f"CUAD mapping version {self.cuad_mapping_version} loaded "
+            f"with {len(self.cuad_to_regulatory_mapping)} entries"
+        )
         
         # Keywords for rule-based classification assistance
         # Expanded with CUAD dataset categories for comprehensive contract understanding
