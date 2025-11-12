@@ -356,11 +356,12 @@ class RegulatoryUpdateTracker:
                     # In a full implementation, send notifications here
                     update.status = UpdateStatus.NOTIFIED
     
-    def check_all_frameworks(self, time_range: str = 'w') -> Dict[str, List[RegulatoryUpdate]]:
+    def check_all_frameworks(self, frameworks: Optional[List[str]] = None, time_range: str = 'w') -> Dict[str, List[RegulatoryUpdate]]:
         """
         Check all enabled frameworks for updates.
         
         Args:
+            frameworks: List of frameworks to check (default: all frameworks)
             time_range: Time range to check
         
         Returns:
@@ -368,9 +369,10 @@ class RegulatoryUpdateTracker:
         """
         results = {}
         
-        frameworks = ['GDPR', 'HIPAA', 'CCPA', 'SOX']
+        # Use provided frameworks or default to all
+        frameworks_to_check = frameworks or ['GDPR', 'HIPAA', 'CCPA', 'SOX']
         
-        for framework in frameworks:
+        for framework in frameworks_to_check:
             logger.info(f"Checking {framework}...")
             updates = self.check_for_updates(framework, time_range=time_range)
             results[framework] = updates
