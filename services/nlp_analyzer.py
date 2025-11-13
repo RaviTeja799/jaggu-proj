@@ -80,7 +80,7 @@ class NLPAnalyzer:
                 )
             
             # HEURISTIC OVERRIDE: Use keyword-based classification for DPA/regulatory clauses
-            # Legal BERT is trained on commercial contracts (CUAD), not DPAs
+            # Primary classifier for regulatory compliance checking
             heuristic_type = self._classify_by_keywords(clause.text)
             
             if heuristic_type:
@@ -90,21 +90,24 @@ class NLPAnalyzer:
                 alternatives = [(heuristic_type, 0.95)]
                 logger.debug(f"Clause {clause.clause_id}: Using heuristic classification '{heuristic_type}'")
             else:
-                # Fall back to Legal BERT for commercial contract clauses
+                # Fall back to Legal BERT for other clauses
                 clause_type, confidence, alternatives = self.classifier.predict(clause.text)
             
-            # Map CUAD types to regulatory types for compliance scoring
-            regulatory_type = self.classifier.get_regulatory_clause_type(clause_type)
+            # Ensure clause_type is one of the recognized regulatory types
+            recognized_types = {
+                "Data Processing",
+                "Sub-processor Authorization", 
+                "Data Subject Rights",
+                "Breach Notification",
+                "Data Transfer",
+                "Security Safeguards",
+                "Permitted Uses and Disclosures",
+                "Other"
+            }
             
-            # If no regulatory mapping (metadata type), use original type
-            final_clause_type = regulatory_type if regulatory_type is not None else clause_type
-            
-            # Log mapping if different
-            if clause_type != final_clause_type:
-                logger.debug(
-                    f"Clause {clause.clause_id}: CUAD type '{clause_type}' "
-                    f"mapped to regulatory type '{final_clause_type}' for compliance scoring"
-                )
+            if clause_type not in recognized_types:
+                logger.debug(f"Clause {clause.clause_id}: Unrecognized type '{clause_type}', classifying as 'Other'")
+                clause_type = "Other"
             
             # Generate embedding
             embedding = self.embedding_generator.generate_embedding(clause.text)
@@ -116,19 +119,18 @@ class NLPAnalyzer:
                     f"Classified as '{clause_type}'. Consider manual review."
                 )
             
-            # Create analysis result with regulatory type for matching
+            # Create analysis result
             analysis = ClauseAnalysis(
                 clause_id=clause.clause_id,
                 clause_text=clause.text,
-                clause_type=final_clause_type,  # Use regulatory type for matching
+                clause_type=clause_type,
                 confidence_score=confidence,
                 embeddings=embedding,
                 alternative_types=alternatives
             )
             
             logger.info(
-                f"Clause {clause.clause_id} analyzed: original_type='{clause_type}', "
-                f"regulatory_type='{final_clause_type}', confidence={confidence:.2f}"
+                f"Clause {clause.clause_id} analyzed: type='{clause_type}', confidence={confidence:.2f}"
             )
             
             return analysis
@@ -202,27 +204,30 @@ class NLPAnalyzer:
             
             # Step 3: Combine results into ClauseAnalysis objects
             logger.info("Step 3: Combining results...")
+            recognized_types = {
+                "Data Processing",
+                "Sub-processor Authorization", 
+                "Data Subject Rights",
+                "Breach Notification",
+                "Data Transfer",
+                "Security Safeguards",
+                "Permitted Uses and Disclosures",
+                "Other"
+            }
+            
             for clause, (clause_type, confidence, alternatives), embedding in zip(
                 clauses, classifications, embeddings
             ):
                 try:
-                    # Map CUAD types to regulatory types for compliance scoring
-                    regulatory_type = self.classifier.get_regulatory_clause_type(clause_type)
-                    
-                    # If no regulatory mapping (metadata type), use original type
-                    final_clause_type = regulatory_type if regulatory_type is not None else clause_type
-                    
-                    # Log mapping if different
-                    if clause_type != final_clause_type:
-                        logger.debug(
-                            f"Clause {clause.clause_id}: CUAD type '{clause_type}' "
-                            f"mapped to regulatory type '{final_clause_type}'"
-                        )
+                    # Ensure clause_type is recognized
+                    if clause_type not in recognized_types:
+                        logger.debug(f"Clause {clause.clause_id}: Unrecognized type '{clause_type}', classifying as 'Other'")
+                        clause_type = "Other"
                     
                     analysis = ClauseAnalysis(
                         clause_id=clause.clause_id,
                         clause_text=clause.text,
-                        clause_type=final_clause_type,  # Use regulatory type for matching
+                        clause_type=clause_type,
                         confidence_score=confidence,
                         embeddings=embedding,
                         alternative_types=alternatives

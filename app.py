@@ -1640,7 +1640,7 @@ with tab5:
                 - 🤖 **AI-Powered Analysis** - Understand impact with LLaMA 3.3 70B analysis
                 - 📊 **Risk Assessment** - Automatic severity classification
                 - 🔔 **Smart Alerts** - Get notified only about relevant changes
-                - 📚 **Knowledge Base** - Learn from 512 contracts in CUAD dataset
+                - 📚 **Knowledge Base** - Comprehensive regulatory requirements tracking
                 """)
             
             with col2:
