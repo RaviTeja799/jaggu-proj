@@ -39,6 +39,8 @@ myenv/
 # Google API Credentials
 config/google_credentials.json
 google_credentials.json
+config/google_oauth_credentials.json
+config/*.json
 
 # Logs
 logs/

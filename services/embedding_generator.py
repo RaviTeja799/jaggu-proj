@@ -2,12 +2,20 @@
 Semantic embedding generation service using Sentence Transformers.
 """
 import streamlit as st
-from sentence_transformers import SentenceTransformer
 import numpy as np
 from typing import List, Dict
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Try to import sentence_transformers, make it optional
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except (ImportError, AttributeError) as e:
+    logger.warning(f"sentence_transformers not available: {e}")
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    SentenceTransformer = None
 
 
 class EmbeddingGenerator:
@@ -21,7 +29,11 @@ class EmbeddingGenerator:
             model_name: Sentence Transformer model name
         """
         self.model_name = model_name
-        self.model = self._load_model()
+        if SENTENCE_TRANSFORMERS_AVAILABLE:
+            self.model = self._load_model()
+        else:
+            self.model = None
+            logger.warning("EmbeddingGenerator running in fallback mode - embeddings will be zeros")
         self._embedding_cache: Dict[str, np.ndarray] = {}
     
     @st.cache_resource
@@ -32,6 +44,10 @@ class EmbeddingGenerator:
         Returns:
             Loaded SentenceTransformer model
         """
+        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+            logger.warning("SentenceTransformer not available, returning None")
+            return None
+            
         try:
             logger.info(f"Loading Sentence Transformer model: {_self.model_name}")
             model = SentenceTransformer(_self.model_name)
@@ -39,7 +55,8 @@ class EmbeddingGenerator:
             return model
         except Exception as e:
             logger.error(f"Error loading Sentence Transformer model: {e}")
-            raise
+            logger.warning("Falling back to dummy embeddings")
+            return None
     
     def generate_embedding(self, text: str, use_cache: bool = True) -> np.ndarray:
         """
@@ -52,6 +69,11 @@ class EmbeddingGenerator:
         Returns:
             Embedding vector as numpy array
         """
+        # Fallback if model not available
+        if not SENTENCE_TRANSFORMERS_AVAILABLE or self.model is None:
+            logger.debug("Using fallback zero embedding")
+            return np.zeros(384)  # all-MiniLM-L6-v2 dimension
+            
         try:
             # Check cache first
             if use_cache and text in self._embedding_cache:
@@ -90,6 +112,11 @@ class EmbeddingGenerator:
         Returns:
             List of embedding vectors
         """
+        # Fallback if model not available
+        if not SENTENCE_TRANSFORMERS_AVAILABLE or self.model is None:
+            logger.debug(f"Using fallback zero embeddings for {len(texts)} texts")
+            return [np.zeros(384) for _ in texts]
+            
         try:
             embeddings = []
             texts_to_encode = []
