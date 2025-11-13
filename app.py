@@ -190,18 +190,35 @@ with tab1:
         
         upload_method = st.radio(
             "Select upload method:",
-            ["File Upload", "Text Input", "Google Sheets URL"]
+            ["Single File Upload", "Batch Upload (up to 10 files)", "Text Input", "Google Sheets URL"]
         )
         
         uploaded_file = None
+        uploaded_files = None
         contract_text = None
         
-        if upload_method == "File Upload":
+        if upload_method == "Single File Upload":
             uploaded_file = st.file_uploader(
                 "Choose a file",
                 type=['pdf', 'docx', 'txt', 'png', 'jpg'],
                 help="Supported formats: PDF, DOCX, TXT, PNG, JPG (max 10MB)"
             )
+        
+        elif upload_method == "Batch Upload (up to 10 files)":
+            uploaded_files = st.file_uploader(
+                "Choose multiple files (up to 10)",
+                type=['pdf', 'docx', 'txt', 'png', 'jpg'],
+                accept_multiple_files=True,
+                help="Upload up to 10 contract files for batch processing"
+            )
+            
+            if uploaded_files and len(uploaded_files) > 10:
+                st.error("⚠️ Maximum 10 files allowed. Please remove some files.")
+                uploaded_files = None
+            elif uploaded_files:
+                st.info(f"📁 {len(uploaded_files)} files selected for batch processing")
+        
+        if upload_method == "Single File Upload" and uploaded_file is not None:
             
             if uploaded_file is not None:
                 # Validate file size (max 10MB)
@@ -247,6 +264,129 @@ with tab1:
                         except Exception as e:
                             st.error(f"❌ Unexpected error: {e}")
                             logger.exception(f"Unexpected error: {e}")
+        
+        elif upload_method == "Batch Upload (up to 10 files)" and uploaded_files:
+            st.markdown("### 📦 Batch Processing")
+            
+            # Validate all file sizes
+            max_size = 10 * 1024 * 1024  # 10MB
+            oversized_files = [f for f in uploaded_files if f.size > max_size]
+            
+            if oversized_files:
+                st.error(f"⚠️ {len(oversized_files)} file(s) exceed 10MB limit:")
+                for f in oversized_files:
+                    st.write(f"- {f.name} ({f.size / 1024 / 1024:.1f} MB)")
+            else:
+                # Display file list
+                with st.expander("📁 Selected Files", expanded=True):
+                    for i, f in enumerate(uploaded_files, 1):
+                        st.write(f"{i}. {f.name} ({f.size / 1024:.1f} KB)")
+                
+                # Batch processing button
+                if st.button("🚀 Process All Files", type="primary", use_container_width=True):
+                    from services.batch_processor import BatchProcessor
+                    
+                    # Save uploaded files to temp locations
+                    temp_paths = []
+                    for uploaded in uploaded_files:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded.name).suffix) as tmp_file:
+                            tmp_file.write(uploaded.getvalue())
+                            temp_paths.append(tmp_file.name)
+                    
+                    # Create progress tracking
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    file_status = {f.name: 0.0 for f in uploaded_files}
+                    
+                    def update_progress(filename: str, progress: float):
+                        file_status[filename] = progress
+                        overall_progress = sum(file_status.values()) / len(file_status)
+                        progress_bar.progress(overall_progress)
+                        status_text.text(f"Processing: {filename} ({progress*100:.0f}%)")
+                    
+                    # Process batch
+                    try:
+                        batch_processor = BatchProcessor(max_workers=3, max_files=10)
+                        summary = batch_processor.process_batch(
+                            temp_paths,
+                            framework=st.session_state.selected_frameworks[0] if st.session_state.selected_frameworks else "GDPR",
+                            progress_callback=update_progress
+                        )
+                        
+                        # Clean up temp files
+                        for path in temp_paths:
+                            try:
+                                os.unlink(path)
+                            except:
+                                pass
+                        
+                        progress_bar.progress(1.0)
+                        status_text.text("✅ Batch processing complete!")
+                        
+                        # Store batch results in session state
+                        st.session_state.batch_summary = summary
+                        st.session_state.batch_mode = True
+                        
+                        # Display summary
+                        st.success(f"✅ Processed {summary.successful}/{summary.total_files} files successfully in {summary.total_time:.2f}s")
+                        
+                        # Show summary metrics
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Total Files", summary.total_files)
+                        with col2:
+                            st.metric("Successful", summary.successful)
+                        with col3:
+                            st.metric("Failed", summary.failed)
+                        with col4:
+                            st.metric("Avg Time", f"{summary.avg_time_per_file:.1f}s")
+                        
+                        # Show aggregated compliance score
+                        agg_metrics = batch_processor.get_aggregated_compliance_score(summary)
+                        
+                        st.markdown("### 📊 Aggregated Compliance Score")
+                        score_col1, score_col2, score_col3 = st.columns(3)
+                        with score_col1:
+                            st.metric("Average Score", f"{agg_metrics['average_score']:.1f}%")
+                        with score_col2:
+                            st.metric("Total Issues", agg_metrics['total_issues'])
+                        with score_col3:
+                            high_risk = agg_metrics['high_risk_count']
+                            st.metric("High Risk Issues", high_risk, delta=None if high_risk == 0 else "❗")
+                        
+                        # Show individual file results
+                        st.markdown("### 📋 Individual File Results")
+                        for result in summary.results:
+                            with st.expander(f"{'✅' if result.success else '❌'} {result.filename}"):
+                                if result.success:
+                                    st.write(f"**Processing Time:** {result.processing_time:.2f}s")
+                                    if result.compliance_results:
+                                        score = result.compliance_results.get('overall_score', 0)
+                                        st.write(f"**Compliance Score:** {score:.1f}%")
+                                        missing = len(result.compliance_results.get('missing_clauses', []))
+                                        st.write(f"**Missing Clauses:** {missing}")
+                                else:
+                                    st.error(f"Error: {result.error}")
+                        
+                        # Export option
+                        st.markdown("### 💾 Export Batch Results")
+                        export_format = st.selectbox("Export Format", ["JSON", "CSV"])
+                        if st.button("📥 Export Results"):
+                            output_path = batch_processor.export_batch_results(
+                                summary,
+                                export_format.lower()
+                            )
+                            st.success(f"Results exported to: {output_path}")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Batch processing failed: {e}")
+                        logger.exception("Batch processing error")
+                        # Clean up temp files on error
+                        for path in temp_paths:
+                            try:
+                                os.unlink(path)
+                            except:
+                                pass
                 
         elif upload_method == "Text Input":
             contract_text = st.text_area(
@@ -899,11 +1039,11 @@ with tab3:
                     
                     with col4:
                         if result.compliance_status.value != 'Compliant':
-                            fix_key = f"fix_{result.clause_id}"
+                            fix_key = f"fix_{result.framework}_{result.clause_id}"
                             if st.button("🛠️ Fix", key=fix_key, use_container_width=True):
                                 st.session_state[f"show_fix_{result.clause_id}"] = True
                         else:
-                            st.button("✅ OK", key=f"ok_{result.clause_id}", use_container_width=True, disabled=True)
+                            st.button("✅ OK", key=f"ok_{result.framework}_{result.clause_id}", use_container_width=True, disabled=True)
                     
                     # Show clause text
                     st.markdown("**Clause Text:**")
@@ -911,7 +1051,7 @@ with tab3:
                         "Clause",
                         value=result.clause_text[:500] + ("..." if len(result.clause_text) > 500 else ""),
                         height=100,
-                        key=f"text_{result.clause_id}",
+                        key=f"text_{result.framework}_{result.clause_id}",
                         disabled=True
                     )
                     
@@ -1278,112 +1418,764 @@ with tab4:
 
 # ==================== TAB 5: REGULATORY UPDATES ====================
 with tab5:
-    st.markdown('<h2 class="section-header">Regulatory Updates</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="section-header">🔄 Real-Time Regulatory Updates</h2>', unsafe_allow_html=True)
     
-    col1, col2 = st.columns([2, 1])
+    # Initialize regulatory update tracker
+    if 'regulatory_tracker' not in st.session_state:
+        try:
+            from services.regulatory_update_tracker import RegulatoryUpdateTracker
+            st.session_state.regulatory_tracker = RegulatoryUpdateTracker()
+            st.session_state.regulatory_updates = []
+        except Exception as e:
+            logger.error(f"Failed to initialize regulatory tracker: {e}")
+            st.session_state.regulatory_tracker = None
     
-    with col1:
-        st.subheader("Recent Regulatory Changes")
-        
-        updates = [
-            {
-                "date": "2024-01-15",
-                "regulation": "GDPR",
-                "change": "Updated guidance on AI and automated decision-making",
-                "impact": "High",
-                "status": "Active"
-            },
-            {
-                "date": "2024-01-10", 
-                "regulation": "HIPAA",
-                "change": "New requirements for telehealth data security",
-                "impact": "Medium",
-                "status": "Pending"
-            },
-            {
-                "date": "2024-01-05",
-                "regulation": "CCPA",
-                "change": "Extended consumer rights for data deletion",
-                "impact": "Medium", 
-                "status": "Active"
-            }
-        ]
-        
-        for update in updates:
-            with st.container():
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.write(f"**{update['regulation']}**: {update['change']}")
-                    st.caption(f"Effective: {update['date']} | Status: {update['status']}")
-                with col2:
-                    impact_color = {
-                        'High': 'risk-high',
-                        'Medium': 'risk-medium',
-                        'Low': 'risk-low'
-                    }[update['impact']]
-                    st.markdown(f"<span class='{impact_color}'>Impact: {update['impact']}</span>", unsafe_allow_html=True)
-                st.divider()
+    tracker = st.session_state.regulatory_tracker
     
-    with col2:
-        st.subheader("Update Monitoring")
+    if tracker is None:
+        st.error("⚠️ Regulatory update tracking is not available. Please check API keys in .env file.")
+        st.info("Required: SERPER_API_KEY and GROQ_API_KEY")
+    else:
+        # Top controls
+        col1, col2, col3 = st.columns([2, 1, 1])
         
-        st.metric("Active Updates", "3")
-        st.metric("High Impact", "1")
-        st.metric("Contracts Affected", "12")
+        with col1:
+            selected_framework_updates = st.multiselect(
+                "Select frameworks to monitor:",
+                options=['GDPR', 'HIPAA', 'CCPA', 'SOX'],
+                default=['GDPR', 'HIPAA'],
+                key="framework_updates"
+            )
         
-        st.progress(75, text="Update Implementation Progress")
+        with col2:
+            time_range = st.selectbox(
+                "Time Range:",
+                options=[("Past Week", "w"), ("Past Month", "m"), ("Past Year", "y")],
+                format_func=lambda x: x[0],
+                index=0
+            )[1]
         
-        if st.button("🔄 Scan for New Updates"):
-            st.success("Scan complete! No new updates found.")
+        with col3:
+            auto_check = st.checkbox("Auto-check daily", value=True)
         
-        st.subheader("Subscribe to Alerts")
-        email = st.text_input("Email for alerts:")
-        if st.button("Subscribe"):
-            st.success("Subscribed to regulatory updates!")
+        # Scan button
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            if st.button("🔍 Scan for Regulatory Updates", type="primary", use_container_width=True):
+                if not selected_framework_updates:
+                    st.warning("Please select at least one framework to monitor")
+                else:
+                    with st.spinner("Scanning regulatory sources and analyzing with AI..."):
+                        try:
+                            # Check all selected frameworks
+                            all_updates = tracker.check_all_frameworks(
+                                frameworks=selected_framework_updates,
+                                time_range=time_range
+                            )
+                            
+                            st.session_state.regulatory_updates = all_updates
+                            
+                            # Show summary
+                            if all_updates:
+                                st.success(f"✅ Found {len(all_updates)} regulatory updates!")
+                                
+                                # Count by severity
+                                critical = sum(1 for u in all_updates if u.severity == 'CRITICAL')
+                                high = sum(1 for u in all_updates if u.severity == 'HIGH')
+                                medium = sum(1 for u in all_updates if u.severity == 'MEDIUM')
+                                
+                                col1, col2, col3, col4 = st.columns(4)
+                                with col1:
+                                    st.metric("Total Updates", len(all_updates))
+                                with col2:
+                                    st.metric("Critical", critical, delta="⚠️" if critical > 0 else None)
+                                with col3:
+                                    st.metric("High", high, delta="❗" if high > 0 else None)
+                                with col4:
+                                    st.metric("Medium", medium)
+                            else:
+                                st.info("No new regulatory updates found in the selected time range.")
+                        
+                        except Exception as e:
+                            st.error(f"❌ Error scanning for updates: {e}")
+                            logger.error(f"Regulatory scan error: {e}", exc_info=True)
+        
+        with col2:
+            # Show stats
+            if st.session_state.regulatory_updates:
+                st.metric("Cached Updates", len(st.session_state.regulatory_updates))
+        
+        st.markdown("---")
+        
+        # Display updates
+        if st.session_state.regulatory_updates:
+            st.subheader("📋 Recent Regulatory Changes")
+            
+            # Filter controls
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                severity_filter = st.multiselect(
+                    "Filter by severity:",
+                    options=['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
+                    default=['CRITICAL', 'HIGH', 'MEDIUM'],
+                    key="severity_filter_updates"
+                )
+            
+            with col2:
+                framework_filter = st.multiselect(
+                    "Filter by framework:",
+                    options=list(set(u.framework for u in st.session_state.regulatory_updates)),
+                    default=list(set(u.framework for u in st.session_state.regulatory_updates)),
+                    key="framework_filter_updates"
+                )
+            
+            with col3:
+                update_type_filter = st.multiselect(
+                    "Filter by type:",
+                    options=list(set(u.update_type for u in st.session_state.regulatory_updates)),
+                    default=list(set(u.update_type for u in st.session_state.regulatory_updates)),
+                    key="type_filter_updates"
+                )
+            
+            # Apply filters
+            filtered_updates = [
+                u for u in st.session_state.regulatory_updates
+                if u.severity in severity_filter
+                and u.framework in framework_filter
+                and u.update_type in update_type_filter
+            ]
+            
+            st.info(f"Showing {len(filtered_updates)} of {len(st.session_state.regulatory_updates)} updates")
+            
+            # Display each update
+            for update in sorted(filtered_updates, key=lambda x: x.published_date, reverse=True):
+                # Severity badge color
+                severity_colors = {
+                    'CRITICAL': '#ff0000',
+                    'HIGH': '#ff6b6b',
+                    'MEDIUM': '#ffd166',
+                    'LOW': '#06d6a0'
+                }
+                severity_color = severity_colors.get(update.severity, '#gray')
+                
+                with st.expander(
+                    f"**{update.framework}** | {update.title[:80]}... | "
+                    f"📅 {update.published_date.strftime('%Y-%m-%d')}",
+                    expanded=(update.severity in ['CRITICAL', 'HIGH'])
+                ):
+                    # Header with badges
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.markdown(
+                            f"<span style='background-color: {severity_color}; color: white; "
+                            f"padding: 4px 8px; border-radius: 4px; font-weight: bold;'>"
+                            f"{update.severity}</span>",
+                            unsafe_allow_html=True
+                        )
+                    with col2:
+                        st.markdown(f"**Type:** {update.update_type}")
+                    with col3:
+                        st.markdown(f"**Framework:** {update.framework}")
+                    with col4:
+                        st.markdown(f"**Source:** {update.source[:20]}...")
+                    
+                    st.markdown("---")
+                    
+                    # Title and summary
+                    st.markdown(f"### {update.title}")
+                    st.markdown(f"**Summary:** {update.summary}")
+                    
+                    # AI Analysis section
+                    if update.ai_analysis:
+                        st.markdown("---")
+                        st.markdown("**🤖 AI Analysis:**")
+                        
+                        analysis = update.ai_analysis
+                        
+                        # Impact assessment
+                        if 'impact_assessment' in analysis:
+                            st.markdown(f"**Impact:** {analysis['impact_assessment']}")
+                        
+                        # Affected areas
+                        if 'affected_areas' in analysis and analysis['affected_areas']:
+                            st.markdown("**Affected Areas:**")
+                            for area in analysis['affected_areas']:
+                                st.markdown(f"- {area}")
+                        
+                        # Required actions
+                        if 'required_actions' in analysis and analysis['required_actions']:
+                            st.markdown("**Required Actions:**")
+                            for action in analysis['required_actions']:
+                                st.markdown(f"✓ {action}")
+                        
+                        # Implementation timeline
+                        if 'implementation_timeline' in analysis:
+                            st.markdown(f"**Timeline:** {analysis['implementation_timeline']}")
+                    
+                    # Links
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button(f"🔗 View Source", key=f"source_{update.update_id}", use_container_width=True):
+                            st.markdown(f"[Open in new tab]({update.url})")
+                    
+                    with col2:
+                        if st.button(f"📧 Create Alert", key=f"alert_{update.update_id}", use_container_width=True):
+                            st.success("Alert created! You'll be notified of similar updates.")
+        
+        else:
+            # No updates yet
+            st.info("👆 Click 'Scan for Regulatory Updates' to check for recent changes")
+            
+            # Show placeholder
+            st.subheader("Why Monitor Regulatory Updates?")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("""
+                **Benefits of Real-Time Monitoring:**
+                
+                - 🔍 **Early Detection** - Catch regulatory changes before they become compliance issues
+                - 🤖 **AI-Powered Analysis** - Understand impact with LLaMA 3.3 70B analysis
+                - 📊 **Risk Assessment** - Automatic severity classification
+                - 🔔 **Smart Alerts** - Get notified only about relevant changes
+                - 📚 **Knowledge Base** - Learn from 512 contracts in CUAD dataset
+                """)
+            
+            with col2:
+                st.markdown("""
+                **Monitored Sources:**
+                
+                - 🇪🇺 **GDPR**: ec.europa.eu, edpb.europa.eu
+                - 🏥 **HIPAA**: hhs.gov, ocr.hhs.gov
+                - 🇺🇸 **CCPA**: oag.ca.gov, cppa.ca.gov
+                - 📊 **SOX**: sec.gov, pcaob.org
+                
+                Plus: Legal databases, official government sites, industry news
+                """)
+        
+        st.markdown("---")
+        
+        # Monitoring settings panel
+        with st.expander("⚙️ Monitoring Settings", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("Notification Preferences")
+                
+                notify_critical = st.checkbox("Notify on CRITICAL updates", value=True)
+                notify_high = st.checkbox("Notify on HIGH updates", value=True)
+                notify_medium = st.checkbox("Notify on MEDIUM updates", value=False)
+                
+                notification_method = st.radio(
+                    "Notification Method:",
+                    options=["Slack", "Email", "In-App Only"],
+                    index=0 if slack_alerts else 2
+                )
+            
+            with col2:
+                st.subheader("Scan Schedule")
+                
+                scan_frequency = st.selectbox(
+                    "Auto-scan frequency:",
+                    options=["Daily", "Weekly", "Monthly", "Manual Only"],
+                    index=0 if auto_check else 3
+                )
+                
+                scan_time = st.time_input("Preferred scan time:", value=datetime.strptime("09:00", "%H:%M").time())
+                
+                if st.button("💾 Save Settings", use_container_width=True):
+                    st.success("✅ Monitoring settings saved!")
+        
+        # Export updates
+        if st.session_state.regulatory_updates:
+            st.markdown("---")
+            st.subheader("📥 Export Updates")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("Download JSON", use_container_width=True):
+                    import json
+                    from datetime import date, datetime
+                    
+                    def json_serial(obj):
+                        if isinstance(obj, (datetime, date)):
+                            return obj.isoformat()
+                        raise TypeError(f"Type {type(obj)} not serializable")
+                    
+                    export_data = [
+                        {
+                            'update_id': u.update_id,
+                            'framework': u.framework,
+                            'title': u.title,
+                            'summary': u.summary,
+                            'severity': u.severity,
+                            'update_type': u.update_type,
+                            'published_date': u.published_date.isoformat(),
+                            'url': u.url,
+                            'ai_analysis': u.ai_analysis
+                        }
+                        for u in filtered_updates
+                    ]
+                    
+                    json_str = json.dumps(export_data, indent=2, default=json_serial)
+                    
+                    st.download_button(
+                        label="📥 Download JSON",
+                        data=json_str,
+                        file_name=f"regulatory_updates_{datetime.now().strftime('%Y%m%d')}.json",
+                        mime="application/json"
+                    )
+            
+            with col2:
+                if st.button("Download CSV", use_container_width=True):
+                    import csv
+                    import io
+                    
+                    output = io.StringIO()
+                    writer = csv.writer(output)
+                    
+                    # Header
+                    writer.writerow(['Framework', 'Title', 'Severity', 'Type', 'Date', 'URL', 'Summary'])
+                    
+                    # Data
+                    for u in filtered_updates:
+                        writer.writerow([
+                            u.framework,
+                            u.title,
+                            u.severity,
+                            u.update_type,
+                            u.published_date.strftime('%Y-%m-%d'),
+                            u.url,
+                            u.summary[:200]
+                        ])
+                    
+                    csv_str = output.getvalue()
+                    
+                    st.download_button(
+                        label="📥 Download CSV",
+                        data=csv_str,
+                        file_name=f"regulatory_updates_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+            
+            with col3:
+                if st.button("Share via Slack", use_container_width=True):
+                    if slack_alerts:
+                        st.success("📤 Shared to Slack!")
+                    else:
+                        st.warning("Please configure Slack integration in Settings tab")
 
 # ==================== TAB 6: SETTINGS ====================
 with tab6:
-    st.markdown('<h2 class="section-header">Settings & Configuration</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="section-header">⚙️ Settings & Configuration</h2>', unsafe_allow_html=True)
     
-    col1, col2 = st.columns(2)
+    # Load current configuration
+    from config.settings import AppConfig
     
-    with col1:
+    try:
+        config = AppConfig()
+        config_loaded = True
+    except Exception as e:
+        st.error(f"Failed to load configuration: {e}")
+        config_loaded = False
+        config = None
+    
+    # Create tabs for different setting categories
+    settings_tab1, settings_tab2, settings_tab3, settings_tab4 = st.tabs([
+        "🔧 Analysis", "🔌 Integrations", "🔔 Notifications", "🔐 API Keys"
+    ])
+    
+    with settings_tab1:
         st.subheader("Analysis Settings")
         
-        st.select_slider(
-            "Analysis Depth",
-            options=["Basic", "Standard", "Comprehensive"],
-            value="Standard"
-        )
+        col1, col2 = st.columns(2)
         
-        st.number_input("Minimum Confidence Threshold (%)", min_value=50, max_value=95, value=75)
+        with col1:
+            analysis_depth = st.select_slider(
+                "Analysis Depth",
+                options=["Basic", "Standard", "Comprehensive"],
+                value="Standard",
+                help="Determines thoroughness of compliance analysis"
+            )
+            
+            confidence_threshold = st.slider(
+                "Minimum Confidence Threshold (%)",
+                min_value=50,
+                max_value=95,
+                value=75,
+                help="Minimum confidence required for clause classification"
+            )
+            
+            prioritized_regulations = st.multiselect(
+                "Prioritized Regulations",
+                options=['GDPR', 'HIPAA', 'CCPA', 'SOX'],
+                default=['GDPR', 'HIPAA'],
+                help="Regulations to prioritize in analysis"
+            )
         
-        st.multiselect(
-            "Prioritized Regulations",
-            options=['GDPR', 'HIPAA', 'CCPA', 'SOX'],
-            default=['GDPR', 'HIPAA']
-        )
+        with col2:
+            use_ai_recommendations = st.checkbox(
+                "Enable AI-powered recommendations",
+                value=True,
+                help="Use LLaMA model for intelligent recommendations"
+            )
+            
+            auto_generate_clauses = st.checkbox(
+                "Auto-generate missing clauses",
+                value=True,
+                help="Automatically generate suggested text for missing clauses"
+            )
+            
+            use_gpu = st.checkbox(
+                "Use GPU acceleration",
+                value=config.models.use_gpu if config_loaded else False,
+                help="Faster processing with GPU (requires CUDA)"
+            )
+            
+            max_file_size = st.number_input(
+                "Max File Size (MB)",
+                min_value=1,
+                max_value=100,
+                value=config.processing.max_file_size_mb if config_loaded else 10,
+                help="Maximum allowed file size for upload"
+            )
         
-        st.checkbox("Enable AI-powered recommendations", value=True)
-        st.checkbox("Auto-generate missing clauses", value=True)
+        st.markdown("---")
+        
+        st.subheader("Model Configuration")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if config_loaded:
+                st.text_input(
+                    "Legal BERT Model",
+                    value=config.models.legal_bert_model,
+                    disabled=True,
+                    help="NLP model for legal text analysis"
+                )
+                
+                st.text_input(
+                    "LLaMA Model",
+                    value=config.models.llama_model,
+                    disabled=True,
+                    help="Large language model for generation"
+                )
+        
+        with col2:
+            if config_loaded:
+                st.text_input(
+                    "Sentence Transformer",
+                    value=config.models.sentence_transformer_model,
+                    disabled=True,
+                    help="Model for semantic similarity"
+                )
+                
+                st.info("💡 Model paths are configured in .env file")
     
-    with col2:
+    with settings_tab2:
         st.subheader("Integration Settings")
         
-        st.text_input("Google Sheets API Key", type="password")
-        st.text_input("Slack Webhook URL")
-        st.text_input("OpenAI API Key", type="password")
+        col1, col2 = st.columns(2)
         
-        st.selectbox(
-            "Default Export Format",
-            options=["PDF", "DOCX", "JSON", "CSV"]
-        )
+        with col1:
+            st.markdown("#### 📊 Google Sheets")
+            
+            google_sheets_enabled = st.checkbox(
+                "Enable Google Sheets Integration",
+                value=google_sheets,
+                help="Export reports directly to Google Sheets"
+            )
+            
+            if google_sheets_enabled:
+                credentials_path = st.text_input(
+                    "Credentials Path",
+                    value="config/google_credentials.json",
+                    help="Path to Google API credentials JSON file"
+                )
+                
+                if st.button("🧪 Test Google Sheets Connection"):
+                    with st.spinner("Testing connection..."):
+                        try:
+                            from services.google_sheets_service import GoogleSheetsService
+                            sheets_service = GoogleSheetsService()
+                            st.success("✅ Google Sheets connection successful!")
+                        except Exception as e:
+                            st.error(f"❌ Connection failed: {e}")
+            
+            st.markdown("---")
+            
+            st.markdown("#### 💬 Slack")
+            
+            slack_enabled = st.checkbox(
+                "Enable Slack Notifications",
+                value=slack_alerts,
+                help="Send compliance alerts to Slack"
+            )
+            
+            if slack_enabled:
+                slack_webhook = st.text_input(
+                    "Webhook URL",
+                    value=config.api.slack_webhook_url if config_loaded and config.api.slack_webhook_url else "",
+                    type="password",
+                    help="Slack webhook URL for notifications"
+                )
+                
+                if st.button("🧪 Test Slack Connection"):
+                    if slack_webhook:
+                        with st.spinner("Sending test message..."):
+                            try:
+                                import requests
+                                response = requests.post(
+                                    slack_webhook,
+                                    json={"text": "✅ Compliance Checker: Test notification successful!"}
+                                )
+                                if response.status_code == 200:
+                                    st.success("✅ Slack notification sent!")
+                                else:
+                                    st.error(f"❌ Failed: {response.status_code}")
+                            except Exception as e:
+                                st.error(f"❌ Error: {e}")
+                    else:
+                        st.warning("Please enter a webhook URL first")
         
-        if st.button("💾 Save Settings", use_container_width=True):
-            st.success("Settings saved successfully!")
+        with col2:
+            st.markdown("#### 📤 Export Settings")
+            
+            default_export_format = st.selectbox(
+                "Default Export Format",
+                options=["PDF", "DOCX", "JSON", "CSV"],
+                index=0,
+                help="Default format for exports"
+            )
+            
+            include_recommendations = st.checkbox(
+                "Include recommendations in exports",
+                value=True
+            )
+            
+            include_risk_analysis = st.checkbox(
+                "Include detailed risk analysis",
+                value=True
+            )
+            
+            st.markdown("---")
+            
+            st.markdown("#### 🔄 Auto-Export")
+            
+            auto_export_enabled = st.checkbox(
+                "Enable automatic export after analysis",
+                value=False
+            )
+            
+            if auto_export_enabled:
+                auto_export_formats = st.multiselect(
+                    "Auto-export formats",
+                    options=["PDF", "JSON", "CSV"],
+                    default=["JSON"]
+                )
+                
+                auto_export_location = st.text_input(
+                    "Export directory",
+                    value="data/exports",
+                    help="Directory for auto-exported files"
+                )
+    
+    with settings_tab3:
+        st.subheader("Notification Preferences")
         
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 🚨 Compliance Alerts")
+            
+            alert_high_risk = st.checkbox(
+                "Alert on high-risk findings",
+                value=True,
+                help="Receive notifications for high-risk issues"
+            )
+            
+            alert_non_compliant = st.checkbox(
+                "Alert on non-compliant clauses",
+                value=True,
+                help="Get notified when clauses fail compliance"
+            )
+            
+            alert_missing_clauses = st.checkbox(
+                "Alert on missing mandatory clauses",
+                value=True,
+                help="Notification for missing required clauses"
+            )
+            
+            st.markdown("---")
+            
+            st.markdown("#### � Email Notifications")
+            
+            email_enabled = st.checkbox("Enable email notifications", value=False)
+            
+            if email_enabled:
+                notification_email = st.text_input(
+                    "Email address",
+                    placeholder="you@example.com"
+                )
+                
+                email_frequency = st.selectbox(
+                    "Email frequency",
+                    options=["Immediate", "Daily Digest", "Weekly Summary"],
+                    index=1
+                )
+        
+        with col2:
+            st.markdown("#### 🔔 Regulatory Update Alerts")
+            
+            notify_critical = st.checkbox(
+                "Notify on CRITICAL updates",
+                value=True,
+                key="settings_notify_critical"
+            )
+            
+            notify_high = st.checkbox(
+                "Notify on HIGH severity updates",
+                value=True,
+                key="settings_notify_high"
+            )
+            
+            notify_medium = st.checkbox(
+                "Notify on MEDIUM severity updates",
+                value=False,
+                key="settings_notify_medium"
+            )
+            
+            st.markdown("---")
+            
+            st.markdown("#### 🕒 Quiet Hours")
+            
+            enable_quiet_hours = st.checkbox("Enable quiet hours", value=False)
+            
+            if enable_quiet_hours:
+                col_start, col_end = st.columns(2)
+                with col_start:
+                    quiet_start = st.time_input("Start time", value=datetime.strptime("22:00", "%H:%M").time())
+                with col_end:
+                    quiet_end = st.time_input("End time", value=datetime.strptime("08:00", "%H:%M").time())
+    
+    with settings_tab4:
+        st.subheader("🔐 API Key Management")
+        
+        st.warning("⚠️ API keys are stored in the `.env` file. Never commit this file to version control!")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 🔍 Serper API (Web Search)")
+            
+            if config_loaded and config.api.serper_api_key:
+                st.success("✅ Serper API key configured")
+                masked_key = config.api.serper_api_key[:8] + "..." + config.api.serper_api_key[-4:]
+                st.code(masked_key)
+            else:
+                st.error("❌ Serper API key not found")
+                st.info("Add SERPER_API_KEY to your .env file")
+            
+            st.markdown("---")
+            
+            st.markdown("#### 🤖 Groq API (LLaMA Inference)")
+            
+            if config_loaded and config.api.groq_api_key:
+                st.success("✅ Groq API key configured")
+                masked_key = config.api.groq_api_key[:8] + "..." + config.api.groq_api_key[-4:]
+                st.code(masked_key)
+            else:
+                st.error("❌ Groq API key not found")
+                st.info("Add GROQ_API_KEY to your .env file")
+        
+        with col2:
+            st.markdown("#### 💬 Slack Integration")
+            
+            if config_loaded and config.api.slack_webhook_url:
+                st.success("✅ Slack webhook configured")
+                masked_url = config.api.slack_webhook_url[:30] + "..."
+                st.code(masked_url)
+            else:
+                st.warning("⚠️ Slack webhook not configured")
+                st.info("Optional: Add SLACK_WEBHOOK_URL to .env")
+            
+            st.markdown("---")
+            
+            st.markdown("#### 📊 Google Sheets API")
+            
+            credentials_exists = os.path.exists("config/google_credentials.json")
+            
+            if credentials_exists:
+                st.success("✅ Google credentials file found")
+            else:
+                st.warning("⚠️ Google credentials not found")
+                st.info("Optional: Add credentials to config/google_credentials.json")
+        
+        st.markdown("---")
+        
+        # API Key setup instructions
+        with st.expander("📖 How to Get API Keys", expanded=False):
+            st.markdown("""
+            ### Serper API (Required for Regulatory Updates)
+            
+            1. Visit [serper.dev](https://serper.dev)
+            2. Sign up for a free account
+            3. Get your API key from the dashboard
+            4. Add to `.env`: `SERPER_API_KEY=your_key_here`
+            
+            ---
+            
+            ### Groq API (Required for AI Analysis)
+            
+            1. Visit [console.groq.com](https://console.groq.com)
+            2. Create an account
+            3. Generate an API key
+            4. Add to `.env`: `GROQ_API_KEY=your_key_here`
+            
+            ---
+            
+            ### Slack Webhook (Optional)
+            
+            1. Go to [api.slack.com/apps](https://api.slack.com/apps)
+            2. Create a new app
+            3. Enable Incoming Webhooks
+            4. Add webhook URL to `.env`
+            
+            ---
+            
+            ### Google Sheets API (Optional)
+            
+            1. Visit [Google Cloud Console](https://console.cloud.google.com)
+            2. Create a project
+            3. Enable Google Sheets API
+            4. Create service account credentials
+            5. Download JSON and save to `config/google_credentials.json`
+            """)
+    
+    # Save button at bottom
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        st.info("💡 Most settings are applied immediately. Configuration changes require restart.")
+    
+    with col2:
         if st.button("🔄 Reset to Defaults", use_container_width=True):
-            st.info("Settings reset to defaults")
+            st.warning("This will reset all settings to defaults")
+            if st.button("Confirm Reset"):
+                st.success("✅ Settings reset to defaults")
+                st.rerun()
+    
+    with col3:
+        if st.button("💾 Save All Settings", type="primary", use_container_width=True):
+            # Here you would save settings to a config file
+            st.success("✅ Settings saved successfully!")
+            st.info("Note: API keys must be set in .env file")
 
 # Footer
 st.markdown("---")

@@ -27,14 +27,14 @@ class RegulatoryKnowledgeBase:
     def __init__(
         self,
         embedding_generator: Optional[EmbeddingGenerator] = None,
-        similarity_threshold: float = 0.75
+        similarity_threshold: float = 0.50
     ):
         """
         Initialize Regulatory Knowledge Base.
         
         Args:
             embedding_generator: Embedding generator for semantic matching
-            similarity_threshold: Minimum similarity score for matching (default 0.75)
+            similarity_threshold: Minimum similarity score for matching (default 0.50)
         """
         self.embedding_generator = embedding_generator or EmbeddingGenerator()
         self.similarity_threshold = similarity_threshold
@@ -227,15 +227,23 @@ class RegulatoryKnowledgeBase:
             List of (requirement, similarity_score) tuples, sorted by score
         """
         try:
-            # Get requirements for framework and clause type
+            # First try to get requirements for framework and clause type
             requirements = self.get_requirements_by_clause_type(
                 clause_analysis.clause_type,
                 framework
             )
             
+            # If no requirements found for specific clause type, fall back to all framework requirements
+            if not requirements:
+                logger.info(
+                    f"No requirements found for {framework} / {clause_analysis.clause_type}, "
+                    f"searching all {framework} requirements"
+                )
+                requirements = self.get_requirements(framework)
+                
             if not requirements:
                 logger.warning(
-                    f"No requirements found for {framework} / {clause_analysis.clause_type}"
+                    f"No requirements found for {framework}"
                 )
                 return []
             

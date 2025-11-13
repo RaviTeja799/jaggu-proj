@@ -246,7 +246,7 @@ class ExportService:
         recommendations: Optional[List[Recommendation]] = None
     ) -> bytes:
         """
-        Export compliance report to PDF format.
+        Export compliance report to PDF format using professional generator.
         
         Args:
             report: ComplianceReport to export
@@ -265,9 +265,29 @@ class ExportService:
             )
         
         try:
-            # Create PDF generator and generate report
-            pdf_generator = PDFReportGenerator()
-            pdf_bytes = pdf_generator.generate_report(report, recommendations)
+            # Import professional PDF generator
+            from services.pdf_report_generator import PDFReportGenerator
+            
+            # Convert ComplianceReport to PDF generator format
+            analysis_results = self._convert_to_pdf_format(report, recommendations)
+            
+            # Generate PDF
+            pdf_gen = PDFReportGenerator(output_dir="reports")
+            pdf_path = pdf_gen.generate_compliance_report(
+                analysis_results,
+                output_filename=None  # Auto-generate filename
+            )
+            
+            # Read PDF file as bytes
+            with open(pdf_path, 'rb') as f:
+                pdf_bytes = f.read()
+            
+            # Cleanup temp file
+            import os
+            try:
+                os.remove(pdf_path)
+            except:
+                pass
             
             logger.info(
                 f"Successfully exported report to PDF "
@@ -279,6 +299,93 @@ class ExportService:
         except Exception as e:
             logger.error(f"Error exporting to PDF: {e}", exc_info=True)
             raise ExportError(f"Failed to export to PDF: {e}")
+    
+    def _convert_to_pdf_format(
+        self,
+        report: ComplianceReport,
+        recommendations: Optional[List[Recommendation]] = None
+    ) -> Dict[str, Any]:
+        """
+        Convert ComplianceReport to PDF generator format.
+        
+        Args:
+            report: ComplianceReport object
+            recommendations: Optional recommendations
+            
+        Returns:
+            Dictionary formatted for PDF generator
+        """
+        from models.regulatory_requirement import ComplianceStatus, RiskLevel
+        
+        # Calculate metrics
+        total_clauses = len(report.clause_results)
+        compliant_clauses = sum(
+            1 for c in report.clause_results 
+            if c.compliance_status == ComplianceStatus.COMPLIANT
+        )
+        non_compliant_clauses = sum(
+            1 for c in report.clause_results 
+            if c.compliance_status == ComplianceStatus.NON_COMPLIANT
+        )
+        missing_clauses = len(report.missing_requirements)
+        
+        # Risk distribution
+        risk_distribution = {'high': 0, 'medium': 0, 'low': 0}
+        for clause in report.clause_results:
+            if clause.risk_level == RiskLevel.HIGH:
+                risk_distribution['high'] += 1
+            elif clause.risk_level == RiskLevel.MEDIUM:
+                risk_distribution['medium'] += 1
+            elif clause.risk_level == RiskLevel.LOW:
+                risk_distribution['low'] += 1
+        
+        # Clause analysis
+        clause_analysis = []
+        for clause in report.clause_results[:50]:  # Limit to 50 for PDF
+            clause_analysis.append({
+                'clause_id': clause.clause_id or 'N/A',
+                'clause_text': clause.clause_text or 'N/A',
+                'is_compliant': clause.compliance_status == ComplianceStatus.COMPLIANT,
+                'risk_level': clause.risk_level.value.lower() if clause.risk_level else 'low',
+                'issues': clause.issues or []
+            })
+        
+        # Recommendations
+        rec_list = []
+        if recommendations:
+            rec_list = [rec.description for rec in recommendations[:10]]
+        
+        # Executive summary
+        exec_summary = ""
+        if report.summary:
+            exec_summary = (
+                f"This compliance analysis covers {', '.join(report.frameworks_checked)} frameworks. "
+                f"The contract achieved an overall compliance score of {report.overall_score:.1f}%. "
+            )
+            if report.overall_score >= 80:
+                exec_summary += "The contract demonstrates strong compliance with regulatory requirements."
+            elif report.overall_score >= 70:
+                exec_summary += "The contract shows moderate compliance, with some areas requiring attention."
+            else:
+                exec_summary += "The contract has significant compliance gaps that require immediate attention."
+        
+        # Framework scores (if available in summary)
+        framework = report.frameworks_checked[0] if report.frameworks_checked else "General"
+        
+        return {
+            'contract_name': report.document_id,
+            'compliance_score': report.overall_score,
+            'framework': framework,
+            'processed_at': datetime.now().isoformat(),
+            'total_clauses': total_clauses,
+            'compliant_clauses': compliant_clauses,
+            'non_compliant_clauses': non_compliant_clauses,
+            'missing_clauses': missing_clauses,
+            'risk_distribution': risk_distribution,
+            'clause_analysis': clause_analysis,
+            'recommendations': rec_list,
+            'executive_summary': exec_summary
+        }
     
     def get_pdf_filename(self, report: ComplianceReport) -> str:
         """
@@ -296,6 +403,9 @@ class ExportService:
 
 class PDFReportGenerator:
     """
+    DEPRECATED: Legacy PDF generator kept for backward compatibility.
+    Use services.pdf_report_generator.PDFReportGenerator for new reports.
+    
     Generate formatted PDF reports for compliance analysis.
     """
     
