@@ -79,8 +79,19 @@ class NLPAnalyzer:
                     }
                 )
             
-            # Classify clause type
-            clause_type, confidence, alternatives = self.classifier.predict(clause.text)
+            # HEURISTIC OVERRIDE: Use keyword-based classification for DPA/regulatory clauses
+            # Legal BERT is trained on commercial contracts (CUAD), not DPAs
+            heuristic_type = self._classify_by_keywords(clause.text)
+            
+            if heuristic_type:
+                # Use heuristic classification for high-confidence regulatory matches
+                clause_type = heuristic_type
+                confidence = 0.95  # High confidence for keyword matches
+                alternatives = [(heuristic_type, 0.95)]
+                logger.debug(f"Clause {clause.clause_id}: Using heuristic classification '{heuristic_type}'")
+            else:
+                # Fall back to Legal BERT for commercial contract clauses
+                clause_type, confidence, alternatives = self.classifier.predict(clause.text)
             
             # Map CUAD types to regulatory types for compliance scoring
             regulatory_type = self.classifier.get_regulatory_clause_type(clause_type)
@@ -278,6 +289,76 @@ class NLPAnalyzer:
         filtered = [a for a in analyses if a.clause_type == clause_type]
         logger.info(f"Found {len(filtered)} clauses of type '{clause_type}'")
         return filtered
+    
+    def _classify_by_keywords(self, text: str) -> Optional[str]:
+        """
+        Classify clause using keyword-based heuristics for regulatory DPA clauses.
+        This overrides Legal BERT when regulatory patterns are detected.
+        
+        Args:
+            text: Clause text to classify
+            
+        Returns:
+            Regulatory clause type if matched, None otherwise
+        """
+        text_lower = text.lower()
+        
+        # Define keyword patterns for each regulatory type
+        patterns = {
+            "Data Processing": [
+                "process", "processing", "processor", "controller", 
+                "instructions", "documented", "data processing obligations",
+                "lawful basis", "purpose limitation"
+            ],
+            "Security Safeguards": [
+                "security", "encryption", "safeguards", "technical measures",
+                "organizational measures", "confidentiality", "integrity",
+                "availability", "resilience", "pseudonymisation", "security of processing"
+            ],
+            "Breach Notification": [
+                "breach", "notification", "notify", "incident", 
+                "72 hours", "undue delay", "personal data breach",
+                "supervisory authority", "data breach"
+            ],
+            "Data Subject Rights": [
+                "data subject rights", "right of access", "rectification",
+                "erasure", "right to be forgotten", "portability", 
+                "restriction of processing", "object to processing",
+                "automated decision"
+            ],
+            "Sub-processor Authorization": [
+                "sub-processor", "subprocessor", "sub processor",
+                "third party processor", "engage", "authorization",
+                "prior written consent", "onward transfer"
+            ],
+            "Data Transfer": [
+                "transfer", "cross-border", "third country", 
+                "international transfer", "standard contractual clauses",
+                "adequacy decision", "binding corporate rules",
+                "transfer mechanism"
+            ],
+            "Permitted Uses and Disclosures": [
+                "permitted use", "disclosure", "authorized purpose",
+                "purpose", "use of data", "permitted disclosure",
+                "lawful disclosure"
+            ]
+        }
+        
+        # Count keyword matches for each type
+        match_scores = {}
+        for clause_type, keywords in patterns.items():
+            score = sum(1 for keyword in keywords if keyword in text_lower)
+            if score > 0:
+                match_scores[clause_type] = score
+        
+        # Return type with highest score if at least 2 keywords match
+        if match_scores:
+            best_type = max(match_scores, key=match_scores.get)
+            if match_scores[best_type] >= 2:
+                logger.info(f"Heuristic classification: '{best_type}' ({match_scores[best_type]} keyword matches)")
+                return best_type
+        
+        return None
     
     def _create_fallback_analysis(self, clause: Clause, error_msg: str) -> ClauseAnalysis:
         """
