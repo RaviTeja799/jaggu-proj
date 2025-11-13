@@ -118,7 +118,12 @@ class RegulatoryKnowledgeBase:
         else:
             requirements = self.get_all_requirements()
         
-        filtered = [req for req in requirements if req.clause_type == clause_type]
+        # Use case-insensitive matching with whitespace normalization
+        clause_type_normalized = clause_type.strip().lower()
+        filtered = [
+            req for req in requirements 
+            if req.clause_type.strip().lower() == clause_type_normalized
+        ]
         logger.debug(
             f"Found {len(filtered)} requirements for clause type '{clause_type}'"
             f"{' in ' + framework if framework else ''}"
