@@ -17,10 +17,6 @@ from services.serper_api_client import SerperAPIClient, OFFICIAL_SOURCES, DEFAUL
 from services.groq_api_client import GroqAPIClient
 from services.knowledge_base_loader import KnowledgeBaseLoader
 
-Regulatory Update Tracking System
-Monitors regulatory changes from public APIs and databases
-"""
-
 import os
 import logging
 import requests
