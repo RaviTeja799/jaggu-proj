@@ -1,12 +1,22 @@
-# AI Compliance Checker - Startup Script
-# This script starts the Streamlit application
+# Quick start script for AI-Powered Regulatory Compliance Checker
+# This PowerShell script starts the Streamlit application
 
-Write-Host "Starting AI Compliance Checker..." -ForegroundColor Cyan
-Write-Host "================================" -ForegroundColor Cyan
+Write-Host "========================================"
+Write-Host "AI-Powered Regulatory Compliance Checker"
+Write-Host "========================================"
+Write-Host ""
+Write-Host "Starting the application..."
+Write-Host ""
+Write-Host "The app will open automatically in your browser at:"
+Write-Host "http://localhost:8501" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Press Ctrl+C to stop the application"
+Write-Host ""
+Write-Host "========================================"
 Write-Host ""
 
-# Activate virtual environment and run Streamlit
-& ".\.venv\Scripts\streamlit.exe" run app.py
+# Change to script directory
+Set-Location $PSScriptRoot
 
-Write-Host ""
-Write-Host "Application stopped." -ForegroundColor Yellow
+# Start Streamlit
+streamlit run app.py
